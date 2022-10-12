@@ -1,0 +1,320 @@
+---
+title: "Ch6"
+author: "Esteban Correa"
+date: "01/26/2022"
+output: html_document
+---
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+```
+
+
+
+# Exercises
+
+## Easy
+
+X.
+
+## Medium.
+
+### 6M1. 
+
+Modify the DAG on page 190 to include the variable V, an unobserved cause of C and Y: variables should you condition on now? C ← V→ Y. Reanalyze the DAG. How many paths connect X to Y? Which must be closed? Which variables should you condition on now?
+
+Original DAG:
+
+```{r}
+ori_dag <- dagitty( "dag { 
+U[unobserved]
+A->U
+A->C
+U -> X
+U->B
+C->Y
+C->B
+X->Y
+}")
+coordinates( ori_dag ) <- list( x=c(X=0,Y=1,C=1,U=0,B=0.5,A=0.5) , y=c(X=1,Y=1,C=0,U=0,B=0.5,A=-0.5) )
+drawdag( ori_dag ) 
+```
+
+
+Modified DAG:
+
+```{r}
+mod_dag <- dagitty( "dag { 
+U[unobserved]
+V[unobserved]
+V->C
+V->Y
+A->U
+A->C
+U -> X
+U->B
+C->Y
+C->B
+X->Y
+}")
+coordinates(mod_dag ) <- list( x=c(X=0,Y=1,C=1,U=0,B=0.5,A=0.5,V=1.5) , y=c(X=1,Y=1,C=0,U=0,B=0.5,A=-0.5,V=0.5) )
+drawdag( mod_dag ) 
+```
+
+We have four alternative paths:
+
+A) X<-U<-A->C->Y
+B) X<-U->B<-C->Y
+C) X<-U<-A->C<-V->Y
+D) X<-U->B<-C<-V->Y
+
+A should be closed, conditioning on A, Not C because it is a collider of V so it will open the path.
+B is already closed because collider at B
+C is already closed because collider at C
+D is already closed because collider at B
+
+Let's check
+
+```{r}
+
+adjustmentSets( ori_dag , exposure="X" , outcome="Y" )
+adjustmentSets( mod_dag , exposure="X" , outcome="Y" )
+```
+
+
+
+## Hard.
+
+### 6H1. 
+Use the Waffle House data, data(WaffleDivorce), to find the total causal influence of number of Waffle Houses on divorce rate. Justify your model or models with a causal graph
+
+```{r}
+data(WaffleDivorce)
+d<-WaffleDivorce
+dag_6h1 <- dagitty( "dag { A -> D 
+A -> M -> D 
+A <- S -> M 
+S -> W -> D
+}") 
+coordinates(dag_6h1 ) <- list( x=c(W=0,D=1,A=1,S=0,M=0.5) , y=c(W=1,D=1,A=0,S=0,M=0.5) )
+drawdag( dag_6h1 ) 
+
+adjustmentSets( dag_6h1 , exposure="W" , outcome="D" )
+```
+
+```{r}
+d$A<-scale(d$MedianAgeMarriage)
+d$D<-scale(d$Divorce)
+d$MR<-scale(d$Marriage)
+d$W<-scale(d$WaffleHouses)
+
+
+m6h1<-quap(flist=alist(
+  D~dnorm(mu,sigma),#
+  mu<-a+ba*A+bm*MR+bw*W,
+  a~dnorm(0,0.2),
+  ba~dnorm(0,0.5),
+  bm~dnorm(0,0.5),
+  bw~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6h1)
+
+#plotting Waffle houses with others  at their means 
+W.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m6h1 , data=data.frame(A=0,W=W.seq,MR=0))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( D ~ W , data=d , col=rangi2,xlim=range(W.seq),
+      ylab="Outcome: Divorce rate (Std)",xlab="Predictor=Waffle houses (Std)" ) 
+mtext("Counterfactual of W, holding A=0, MR=0")
+lines( W.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , W.seq )
+```
+
+
+
+
+```{r}
+
+m6h1c<-quap(flist=alist(
+  D~dnorm(mu,sigma),#
+  mu<-alpha+bw*W,
+  alpha~dnorm(0,.5),
+  bw~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6h1c)
+
+d$southidx=d$South+1
+
+m6h1b<-quap(flist=alist(
+  D~dnorm(mu,sigma),#
+  mu<-alpha[southidx]+bw*W,
+  alpha[southidx]~dnorm(0,.5),
+  bw~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6h1b,depth=2 )
+
+par(mfrow=c(1,3))
+plot( precis( m6h1b , depth=2 , pars="alpha" ) , xlab="expected divorce rate (std)" )
+
+
+#plotting Waffle houses with others  at their means 
+W.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m6h1b , data=data.frame(southidx=1,W=W.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( D ~ W , data=d , col=rangi2,xlim=range(W.seq),
+      ylab="Outcome: Divorce rate (Std)",xlab="Predictor=Waffle houses (Std)" ) 
+mtext("Counterfactual of W, holding South=NO")
+lines( W.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , W.seq )
+
+#plotting Waffle houses with others  at their means 
+W.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m6h1b , data=data.frame(southidx=2,W=W.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( D ~ W , data=d , col=rangi2,xlim=range(W.seq),
+      ylab="Outcome: Divorce rate (Std)",xlab="Predictor=Waffle houses (Std)" ) 
+mtext("Counterfactual of W, holding South=YES")
+lines( W.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , W.seq )
+```
+
+
+After closing the path using S, there is no real causal influence of the number of waffle houses on the divorce rate. Waffle house is a confounder.
+
+
+### 6H2. 
+
+```{r}
+impliedConditionalIndependencies(dag_6h1)
+```
+
+Age and waffles are independent when conditioning on South:
+
+```{r}
+m6h2a<-quap(flist=alist(
+  A~dnorm(mu,sigma),#
+  mu<-alpha[southidx]+bw*W,
+  alpha[southidx]~dnorm(0,.5),
+  bw~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6h2a,depth=2 )
+
+par(mfrow=c(1,2))
+#plotting Waffle houses with others  at their means 
+W.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m6h2a , data=data.frame(southidx=1,W=W.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( A ~ W , data=d , col=rangi2,xlim=range(W.seq),
+      ylab="Outcome: Age (Std)",xlab="Predictor=Waffle houses (Std)" ) 
+mtext("Counterfactual of W, holding South=NO")
+lines( W.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , W.seq )
+
+mu <- link( m6h2a , data=data.frame(southidx=2,W=W.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( A ~ W , data=d , col=rangi2,xlim=range(W.seq),
+      ylab="Outcome: Age (Std)",xlab="Predictor=Waffle houses (Std)" ) 
+mtext("Counterfactual of W, holding South=Yes")
+lines( W.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , W.seq )
+```
+
+
+Divorce and south are independent when conditioning on age, marriage, waffles:
+
+```{r}
+m6h2b<-quap(flist=alist(
+  D~dnorm(mu,sigma),#
+  mu<-alpha[southidx]+ba*A+bm*MR+bw*W,
+  alpha[southidx]~dnorm(0,.5),
+  ba~dnorm(0,0.5),
+  bm~dnorm(0,0.5),
+  bw~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6h2b,depth=2 )
+
+```
+
+Yes, divorce is conditional independent of south.
+
+Marriage and waffles when conditioning on south:
+
+```{r}
+m6h2c<-quap(flist=alist(
+  MR~dnorm(mu,sigma),#
+  mu<-alpha[southidx]+bw*W,
+  alpha[southidx]~dnorm(0,.5),
+  bw~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6h2c,depth=2 )
+
+par(mfrow=c(1,2))
+#plotting Waffle houses with others  at their means 
+W.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m6h2c , data=data.frame(southidx=1,W=W.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( MR ~ W , data=d , col=rangi2,xlim=range(W.seq),
+      ylab="Outcome: Marriage (Std)",xlab="Predictor=Waffle houses (Std)" ) 
+mtext("Counterfactual of W, holding South=NO")
+lines( W.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , W.seq )
+
+mu <- link( m6h2c , data=data.frame(southidx=2,W=W.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( MR ~ W , data=d , col=rangi2,xlim=range(W.seq),
+      ylab="Outcome: Marriage (Std)",xlab="Predictor=Waffle houses (Std)" ) 
+mtext("Counterfactual of W, holding South=Yes")
+lines( W.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , W.seq )
+```
+
+
+
+
+
+
+
+
+
+

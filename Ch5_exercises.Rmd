@@ -1,0 +1,643 @@
+---
+title: "Ch5"
+author: "Esteban Correa"
+date: "01/26/2022"
+output: html_document
+---
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+memory.limit(size=64000)
+gc()
+```
+
+
+
+# Exercises
+
+## Easy
+
+### 5E1
+
+Which of the linear models below are multiple linear regressions? 
+
+(1) $\mu_{i} = \alpha + \beta x_{i} $
+
+(2) $\mu_{i} = \beta_{x} x_{i} + \beta_{z} z_{i} $
+
+(3) $\mu_{i} = \alpha + \beta (x_{i}-z_{i})$
+
+(4) $\mu_{i} =\alpha+ \beta_{x} x_{i} + \beta_{z} z_{i} $
+
+Model 4 is a multiple linear regression with two betas.
+
+### 5E2.
+
+Write down a multiple regression to evaluate the claim: Animal diversity is linearly related to latitude, but only after controlling for plant diversity. You just need to write down the model definition.
+
+$AD_{i} =\alpha+ \beta_{L} L_{i} + \beta_{PD} PD_{i} $
+
+Where AD is animal diversity, L is latitude and PD is plant diversity.
+
+### 5E3. 
+
+Write down a multiple regression to evaluate the claim: Neither amount of funding nor size of laboratory is by itself a good predictor of time to PhD degree; but together these variables are both positively associated with time to degree. Write down the model definition and indicate which side of zero each slope parameter should be on.
+
+$D_{i}\sim Normal(\mu,\sigma)$
+
+$\mu=\alpha+\beta_{1} Funding_{i}+\beta_{2} SizeLab_{i}$
+
+$\alpha\sim Normal(0,0.2)$ 
+
+$\beta_{1}\sim Normal(0,0.5)$
+
+$\beta_{2}\sim Normal(0,0.5)$
+
+$\sigma\sim Exponential(1)$
+
+Each slope parameter should be on the right side of the forest plot.
+
+### 5E4.
+
+Suppose you have a single categorical predictor with 4 levels (unique values), labeled A, B, C and D. Let Ai be an indicator variable that is 1 where case i is in category A. Also suppose Bi, Ci, and Di for the other categories. Now which of the following linear models are inferentially equivalent ways to include the categorical variable in a regression? Models are inferentially equivalent when it’s possible to compute one posterior distribution from the posterior distribution of another model.
+
+According to http://rstudio-pubs-static.s3.amazonaws.com/454434_bc71e4f682914648884035588dfaf036.html, we can conclude model 1 allows $\alpha$ as intercept for C and slopes for A, B and D. Model 3 allows $alpha$ for A and slopes for B, C, and D. Model 4 uses an index variable notation for A, B, C, and D. Model 5 allows to compute A when all others are zero and viceversa.
+
+## Medium
+
+### 5M1
+
+Invent your own example of a spurious correlation. An outcome variable should be correlated with both predictor variables. But when both predictors are entered in the same model, the correlation between the outcome and one of the predictors should mostly vanish (or at least be greatly reduced).
+
+```{r}
+set.seed(123)
+N<-100
+xreal<-rnorm(N)
+xspur<-rnorm(N,xreal) # a predictor influences the spurious predictor
+y<-rnorm(N,xreal)
+df<-data.frame(y=y,xr=xreal,xs=xspur)
+pairs(df)
+
+# modeling y~xreal
+m5m1a<-quap(flist=alist(
+  y~dnorm(mu,sigma),
+  mu<-a+b1*xr,
+  a~dnorm(0,0.2),
+  b1~dnorm(0,0.5),
+  sigma~dexp(1)
+  ),data=df)
+precis(m5m1a)
+
+# modeling y~xspur
+m5m1b<-quap(flist=alist(
+  y~dnorm(mu,sigma),
+  mu<-a+b2*xs,
+  a~dnorm(0,0.2),
+  b2~dnorm(0,0.5),
+  sigma~dexp(1)
+  ),data=df)
+precis(m5m1b)
+
+# modeling y~xreal+xspur
+m5m1c<-quap(flist=alist(
+  y~dnorm(mu,sigma),
+  mu<-a+b1*xr+b2*xs,
+  a~dnorm(0,0.2),
+  b1~dnorm(0,0.5),
+  b2~dnorm(0,0.5),
+  sigma~dexp(1)
+  ),data=df)
+precis(m5m1c)
+plot(coeftab(m5m1a,m5m1b,m5m1c),par=c("b1","b2"))
+```
+
+
+###5M2. 
+
+Invent your own example of a masked relationship. An outcome variable should be correlated with both predictor variables, but in opposite directions. And the two predictor variables should be correlated with one another.
+
+```{r}
+set.seed(123)
+N<-100
+xreal<-rnorm(N)
+xmask<-rnorm(N,xreal) # a predictor influences the masked predictor
+y<-rnorm(N,xreal-xmask)
+df<-data.frame(y=y,xr=xreal,xm=xmask)
+pairs(~y+xreal+xmask,df)
+
+# modeling y~xreal
+m5m2a<-quap(flist=alist(
+  y~dnorm(mu,sigma),
+  mu<-a+br*xr,
+  a~dnorm(0,0.2),
+  br~dnorm(0,0.5),
+  sigma~dexp(1)
+  ),data=df)
+precis(m5m1a)
+
+# modeling y~xmasked
+m5m2b<-quap(flist=alist(
+  y~dnorm(mu,sigma),
+  mu<-a+bm*xm,
+  a~dnorm(0,0.2),
+  bm~dnorm(0,0.5),
+  sigma~dexp(1)
+  ),data=df)
+precis(m5m2b)
+
+# modeling y~xreal+xmasked
+m5m2c<-quap(flist=alist(
+  y~dnorm(mu,sigma),
+  mu<-a+br*xr+bm*xm,
+  a~dnorm(0,0.2),
+  br~dnorm(0,0.5),
+  bm~dnorm(0,0.5),
+  sigma~dexp(1)
+  ),data=df)
+precis(m5m2c)
+plot(coeftab(m5m2a,m5m2b,m5m2c),par=c("br","bm"))
+```
+
+
+### 5M3.
+
+It is sometimes observed that the best predictor of fire risk is the presence of firefighters. States and localities with many firefighters also have more fires. Presumably firefighters do not cause fires. Nevertheless, this is not a spurious correlation. Instead fires cause firefighters. Consider the same reversal of causal inference in the context of the divorce and marriage data. How might a high divorce rate cause a higher marriage rate? Can you think of a way to evaluate this relationship, using multiple regression?
+**Answer**
+It is sometimes observed that the best predictor of divorces is the Higher marriage rates.Consider the same reversal of causal inference, high divorce rates cause marriage rates.
+Hypothesis: People already divorced might be find at getting married easier because it is not the first time for them, so high divorce may translate to more opportunities to get married again.
+
+$MR_{i}\sim Normal(\mu,\sigma)$
+
+$\mu=\alpha+\beta D$
+
+$\alpha\sim Normal(0,0.2)$ 
+
+$\beta\sim Normal(0,0.5)$
+
+$\sigma\sim Exponential(1)$
+
+Build the model:
+
+```{r}
+data("WaffleDivorce")
+
+d<-WaffleDivorce
+d$MA<-scale(d$MedianAgeMarriage)
+d$D<-scale(d$Divorce)
+d$MR<-scale(d$Marriage)
+sd(d$MedianAgeMarriage)
+
+
+m5m3<-quap(flist=alist(
+  MR~dnorm(mu,sigma),
+  mu<-a+bd*D,
+  a~dnorm(0,0.2),
+  bd~dnorm(0,0.4), #skeptical prior set to 0.4
+  sigma~dexp(1)
+),data = d)
+precis(m5m3)
+par(mfrow=c(1,2))
+
+# Priors
+set.seed(123)
+# extract samples from the posterior
+prior <- extract.prior( m5m3 )
+mu<-link(m5m3,post=prior,data=list(D=c(-2,2)))
+# display raw data and sample size
+plot( NULL , xlim=c(-2,2) , 
+      ylim=c(-2,2),col=rangi2 , 
+      xlab="Priors for Divorce",
+      ylab="Outcome space for Marriage rate"
+       )
+# plot the lines, with transparency
+for ( i in 1:1e2 )
+  lines( c(-2,2),mu[i,],col=col.alpha("black",0.3) , add=TRUE )
+
+D.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each AGE in MA.seq
+mu <- link( m5m3 , data=data.frame(D=D.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+# plot it all 
+plot( MR ~ D , data=d , col=rangi2,xlab="Predictor: Divorce rate (Std)",ylab="Outcome=Marriage rate (Std)" ) 
+lines( D.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , D.seq )
+```
+
+
+### 5M4.
+
+In the divorce data, States with high numbers of Mormons (members of The Church of Jesus Christ of Latter-day Saints, LDS) have much lower divorce rates than the regression models expected. Find a list of LDS population by State and use those numbers as a predictor variable, predicting divorce rate using marriage rate, median age at marriage, and percent LDS population (possibly standardized). You may want to consider transformations of the raw percent LDS variable.
+
+Following the Wikipedia percentages I have:
+
+```{r}
+d$LDS <- c(0.0077, 0.0453, 0.0610, 0.0104, 0.0194, 0.0270, 0.0044, 0.0057, 0.0041, 0.0075, 0.0082, 0.0520, 0.2623, 0.0045, 0.0067, 0.0090, 0.0130, 0.0079, 0.0064, 0.0082, 0.0072, 0.0040, 0.0045, 0.0059, 0.0073, 0.0116, 0.0480, 0.0130, 0.0065, 0.0037, 0.0333, 0.0041, 0.0084, 0.0149, 0.0053, 0.0122, 0.0372, 0.0040, 0.0039, 0.0081, 0.0122, 0.0076, 0.0125, 0.6739, 0.0074, 0.0113, 0.0390, 0.0093, 0.0046, 0.1161)
+
+hist(d$LDS,128)
+hist(log(d$LDS),128)
+hist(scale(log(d$LDS)),128)
+d$LDS.S<-scale(log(d$LDS))
+```
+
+Univariate case:
+
+```{r}
+m5m4a<-quap(flist=alist(
+  D~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+bl*LDS.S,
+  a~dnorm(0,0.2),
+  # ba~dnorm(0,0.5),
+  # bm~dnorm(0,0.5),
+  bl~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5m4a)
+par(mfrow=c(1,2))
+# Priors
+set.seed(123)
+# extract samples from the posterior
+prior <- extract.prior( m5m4a )
+mu<-link(m5m4a,post=prior,data=list(LDS.S=c(-2,2)))
+# display raw data and sample size
+plot( NULL , xlim=c(-2,2) , 
+      ylim=c(-2,2),col=rangi2 , 
+      xlab="Priors for Mormons %",
+      ylab="Outcome space for Divorce rate"
+       )
+# plot the lines, with transparency
+for ( i in 1:1e2 )
+  lines( c(-2,2),mu[i,],col=col.alpha("black",0.3) , add=TRUE )
+
+L.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each AGE in MA.seq
+mu <- link( m5m4a , data=data.frame(LDS.S=L.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+# plot it all 
+plot( D ~ LDS.S , data=d , col=rangi2,ylab="Outcome: Divorce rate (Std)",xlab="Predictor=Mormons % (Std)" ) 
+lines( L.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , D.seq )
+```
+
+All predictors case:
+
+```{r}
+m5m4b<-quap(flist=alist(
+  D~dnorm(mu,sigma),#
+  mu<-a+ba*MA+bm*MR+bl*LDS.S,
+  a~dnorm(0,0.2),
+  ba~dnorm(0,0.5),
+  bm~dnorm(0,0.5),
+  bl~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5m4b)
+
+plot(coeftab(m5m4a,m5m4b),par=c("ba","bm","bl"))
+
+
+par(mfrow=c(1,2))
+# Priors
+set.seed(123)
+# extract samples from the posterior
+prior <- extract.prior( m5m4a )
+mu<-link(m5m4a,post=prior,data=list(LDS.S=c(-2,2)))
+# display raw data and sample size
+plot( NULL , xlim=c(-2,2) , 
+      ylim=c(-2,2),col=rangi2 , 
+      xlab="Priors for Mormons %",
+      ylab="Outcome space for Divorce rate"
+       )
+# plot the lines, with transparency
+for ( i in 1:1e2 )
+  lines( c(-2,2),mu[i,],col=col.alpha("black",0.3) , add=TRUE )
+
+L.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each AGE in MA.seq
+mu <- link( m5m4a , data=data.frame(LDS.S=L.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+# plot it all 
+plot( D ~ LDS.S , data=d , col=rangi2,ylab="Outcome: Divorce rate (Std)",xlab="Predictor=Mormons % (Std)" ) 
+lines( L.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , D.seq )
+```
+
+After evaluating the linear regression and multiple regression. Mormons are significant for the multiple escenario. Median age at marriage and percentage of mormons per state reduce the divorce rates. Per each additional std in age, 0.3 less std divorces happen. Similarly, per each additional log std in mormons percentage, 0.7 less std divorces happen.
+
+### 5M5
+
+One way to reason through multiple causation hypotheses is to imagine detailed mechanisms through which predictor variables may influence outcomes. For example, it is sometimes argued that the price of gasoline (predictor variable) is positively associated with lower obesity rates (outcome variable). However, there are at least two important mechanisms by which the price of gas could reduce obesity. First, it could lead to less driving and therefore more exercise. Second, it could lead to less driving, which leads to less eating out, which leads to less consumption of huge restaurant meals. Can you outline one or more multiple regressions that address these two mechanisms? Assume you can have any predictor data you need.
+
+To capture first mechanism, we can measure the number of steps per people in a period of time (let's say a month). Then the first model will include avg price of gas and avg number of steps per month.
+
+$O_{i}\sim Normal(\mu,\sigma)$
+
+$\mu=\alpha+\beta_{G} G+\beta_{ST} ST$
+
+The second mechanism can be captured by a frequency variable for the number of times that people goes to restaurants:
+
+$O_{i}\sim Normal(\mu,\sigma)$
+
+$\mu=\alpha+\beta_{G} G+\beta_{FR} FR$
+
+where G represents the price of gasoline, ST represents the steps done per person, and FR represents the frequency at restaurants  variable. One version of this model might use self-reported frequencies of exercise and eating out, and another version might use more rigorously measured calories burned through exercise and calories ingested from restaurants.
+
+## Hard
+
+All three exercises below use the same data, data(foxes) (part of rethinking).84 The urban fox (Vulpes vulpes) is a successful exploiter of human habitat. Since urban foxes move in packs and defend territories, data on habitat quality and population density is also included. The data frame has five columns:
+
+(1) group: Number of the social group the individual fox belongs to 
+(2) avgfood: The average amount of food available in the territory 
+(3) groupsize: The number of foxes in the social group 
+(4) area: Size of the territory 
+(5) weight: Body weight of the individual fox
+
+```{r}
+data("foxes")
+d<-foxes
+
+d$W<-scale(d$weight)
+d$GS<-scale(d$groupsize)
+d$A<-scale(d$area)
+```
+
+
+### 5H1
+
+Fit two bi-variate Gaussian regressions, using quap: (1) body weight as a linear function of territory size (area), and (2) body weight as a linear function of group size. Plot the results of these regressions, displaying the MAP regression line and the 95% interval of the mean. Is either variable important for predicting fox body weight?
+
+```{r}
+m5h1a<-quap(flist=alist(
+  W~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+ba*A,
+  a~dnorm(0,0.2),
+  ba~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1a)
+
+par(mfrow=c(1,2))
+# Priors
+set.seed(123)
+# extract samples from the posterior
+prior <- extract.prior( m5h1a )
+mu<-link(m5h1a,post=prior,data=list(A=c(-2,2)))
+# display raw data and sample size
+plot( NULL , xlim=c(-2,2) , 
+      ylim=c(-2,2),col=rangi2 , 
+      xlab="Priors for territory area ",
+      ylab="Outcome space for fox's weight"
+       )
+# plot the lines, with transparency
+for ( i in 1:1e2 )
+  lines( c(-2,2),mu[i,],col=col.alpha("black",0.3) , add=TRUE )
+
+A.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1a , data=data.frame(A=A.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+# plot it all 
+plot( W ~ A , data=d , col=rangi2,ylab="Outcome: Weight (Std)",xlab="Predictor=Territory area (Std)" ) 
+lines( A.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , A.seq )
+
+```
+
+Territory area seems not influencing fox weight.
+
+Weight~Group size
+
+```{r}
+m5h1b<-quap(flist=alist(
+  W~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+bgs*GS,
+  a~dnorm(0,0.2),
+  bgs~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1b)
+
+par(mfrow=c(1,2))
+# Priors
+set.seed(123)
+# extract samples from the posterior
+prior <- extract.prior( m5h1b )
+mu<-link(m5h1b,post=prior,data=list(GS=c(-2,2)))
+# display raw data and sample size
+plot( NULL , xlim=c(-2,2) , 
+      ylim=c(-2,2),col=rangi2 , 
+      xlab="Priors for group size ",
+      ylab="Outcome space for fox's weight"
+       )
+# plot the lines, with transparency
+for ( i in 1:1e2 )
+  lines( c(-2,2),mu[i,],col=col.alpha("black",0.3) , add=TRUE )
+
+GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1b , data=data.frame(GS=GS.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ GS , data=d , col=rangi2,ylab="Outcome: Weight (Std)",xlab="Predictor=Group size (Std)" ) 
+lines( GS.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , GS.seq )
+
+```
+
+Group size seems to be negative associated to weight. The bigger the group the less weight of the fox.
+
+### 5H2
+
+Now fit a multiple linear regression with weight as the outcome and both area and group size as predictor variables. Plot the predictions of the model for each predictor, holding the other predictor constant at its mean. What does this model say about the importance of each variable? Why do you get different results than you got in the exercise just above?
+
+```{r}
+m5h1c<-quap(flist=alist(
+  W~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+bgs*GS+ba*A,
+  a~dnorm(0,0.2),
+  bgs~dnorm(0,0.5),
+  ba~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1c)
+
+plot(coeftab(m5h1a,m5h1b,m5h1c),par=c("bgs","ba"))
+pairs(~W+GS+A,data=d)
+
+par(mfrow=c(1,2))
+#plotting area with group size at its mean (GS=0)
+A.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1c , data=data.frame(GS=0,A=A.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ A , data=d , col=rangi2,ylab="Outcome: Weight (Std)",xlab="Predictor=Territory area (Std)" ) 
+mtext("Counterfactual of area, holding group size=0")
+lines( A.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , A.seq )
+
+GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1c , data=data.frame(GS=GS.seq,A=0))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ GS , data=d , col=rangi2,
+      ylab="",
+      xlab="Predictor=Group size (Std)" ) 
+mtext("Counterfactual of group size, holding Area=0")
+lines( GS.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , GS.seq )
+```
+
+There might be a masked relationship. According to the forest plot, their effects are larger than before. According to the counterfactual plot, they cancel out together, and they alone are not associated with the outcome, GS and A are positively correlated, the larger group size the bigger the territory area. There is a masked relationship here with  probable causal graphs:
+
+```{r}
+par(mfrow=c(1,3))
+dagA<-dagitty("dag{
+                GS->A
+                A->W
+                GS->W
+}")
+coordinates(dagA) <- list( x=c(GS=0,W=1,A=2) , y=c(GS=0.5,W=1,A=0.5) )
+drawdag(dagA)
+# you can obtain all possible DAGs "Markov equivalencies"
+ldags<-equivalentDAGs(dagA)
+drawdag(ldags[1:2])
+```
+
+
+
+
+### 5H3
+
+Finally, consider the avgfood variable. Fit two more multiple regressions: (1) body weight as an additive function of avgfood and group size, and (2) body weight as an additive function of all three variables, avgfood and groupsize and area.
+
+Weight~avgfood+group size
+
+```{r}
+d$AF<-scale(d$avgfood)
+m5h1d<-quap(flist=alist(
+  W~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+bgs*GS+bf*AF,
+  a~dnorm(0,0.2),
+  bgs~dnorm(0,0.5),
+  bf~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1d)
+
+par(mfrow=c(1,2))
+#plotting food with group size at its mean (GS=0)
+AF.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1d , data=data.frame(GS=0,AF=AF.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ AF , data=d , col=rangi2,ylab="Outcome: Weight (Std)",xlab="Predictor=Avg food (Std)" ) 
+mtext("Counterfactual of avg food, holding group size=0")
+lines( AF.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , AF.seq )
+
+GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1d , data=data.frame(GS=GS.seq,AF=0))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ GS , data=d , col=rangi2,
+      ylab="",
+      xlab="Predictor=Group size (Std)" ) 
+mtext("Counterfactual of group size, holding avg food=0")
+lines( GS.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , GS.seq )
+```
+
+weight~groupsize+avgfood+area
+
+```{r}
+m5h1e<-quap(flist=alist(
+  W~dnorm(mu,sigma),
+  mu<-a+bgs*GS+ba*A+bf*AF,
+  a~dnorm(0,0.2),
+  bgs~dnorm(0,0.5),
+  ba~dnorm(0,0.5),
+  bf~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1e)
+
+plot(coeftab(m5h1a,m5h1b,m5h1c,m5h1d,m5h1e),par=c("bgs","ba","bf"))
+pairs(~W+GS+A+AF,data=d)
+
+par(mfrow=c(1,3))
+#plotting area with group size at its mean (GS=0)
+A.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1e , data=data.frame(GS=0,AF=0,A=A.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ A , data=d , col=rangi2,ylab="Outcome: Weight (Std)",xlab="Predictor=Territory area (Std)" ) 
+mtext("Counterfactual of area, GS,AF=0")
+lines( A.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , A.seq )
+
+GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1e , data=data.frame(GS=GS.seq,A=0,AF=0))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ GS , data=d , col=rangi2,
+      ylab="",
+      xlab="Predictor=Group size (Std)" ) 
+mtext("Counterfactual of group size, A,AF=0")
+lines( GS.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , GS.seq )
+
+AF.seq=seq(-3,3,length.out=50)
+# GS.seq=seq(-3,3,length.out=50)
+#use link to compute mu for each sample from posterior and for each area in A.seq
+mu <- link( m5h1e , data=data.frame(GS=0,A=0,AF=AF.seq))
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.95 )
+# plot it all 
+plot( W ~ AF , data=d , col=rangi2,ylab="Outcome: Weight (Std)",xlab="Predictor=Avg food (Std)" ) 
+mtext("Counterfactual of avg food, GS,A=0")
+lines( AF.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , AF.seq )
+```
+
+Compare the results of these models to the previous models you’ve fit, in the first two exercises. (a) Is avgfood or area a better predictor of body weight? If you had to choose one or the other to include in a model, which would it be? Support your assessment with any tables or plots you choose. (b) When both avgfood or area are in the same model, their effects are reduced (closer to zero) and their standard errors are larger than when they are included in separate models. Can you explain this result?
+
+**Answer**
+(a) Area and avgfood behave similarly. However, I will choose avgfood in territory area as a predictor, because the size of the territory covered by foxes might not be rich in terms of food resources (preys) influencing their body weight.
+(b) There is a possible spurious correlation between area and avg food. Not always big territories are rich in terms of food resources.
+
+

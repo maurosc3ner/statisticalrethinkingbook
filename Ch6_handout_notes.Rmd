@@ -1,0 +1,507 @@
+---
+title: "Ch5"
+author: "Esteban Correa"
+date: "01/26/2022"
+output: html_document
+---
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+memory.limit(size=64000)
+gc()
+
+theme_set(theme_minimal())
+```
+
+Trustworthy vs newsworthy
+
+```{r}
+set.seed(123)
+N<-200
+
+df<-data.frame(trust=rnorm(N),news=rnorm(N))
+df$total<-df$trust+df$news
+
+# select 10% top proposals
+p=0.1
+quantile(df$total)
+(thresh<-quantile(df$total,1-p))
+df$top10<-ifelse(df$total>thresh,T,F)
+
+tsel<-trust[top10]
+nsel<-news[top10]
+
+cor(tsel,nsel)
+
+m6<-lm(total~trust+news,df%>%filter(top10 == TRUE))
+summary(m6)
+plot(df$news,df$trust,col="black")
+points(nsel,tsel,col=rangi2,add=T,pch=19)
+abline(m6)
+
+mytext <-
+  tibble(news  = c(2, -1), 
+         trust = c(2.25, -1),
+         top10        = c(TRUE, FALSE),
+         label           = c("Top 10% proposals", "90% rejected"))
+
+df %>% 
+  ggplot(aes(x = news, y = trust, color = top10)) +
+  geom_point(aes(shape = top10), alpha = 3/4) +
+  geom_text(data = mytext,
+            aes(label = label)) +
+  geom_smooth(data = . %>% filter(top10 == TRUE),
+              method = "lm", fullrange = T,
+              color = "lightblue", se = F, size = 1/2) +
+  scale_color_manual(values = c("black", "lightblue")) +
+  scale_shape_manual(values = c(1, 19)) +
+  scale_x_continuous(limits = c(-3, 3.9), expand = c(0, 0)) +
+  coord_cartesian(ylim = range(df$trust)) +
+  theme(legend.position = "none")
+
+```
+
+
+# 6.1 Multicollinearity
+
+What is expected?
+On average, an individual’s legs are 45% of their height (in these simulated data). So we should expect the beta coefficient that measures the association of a leg with height to end up around the average height (10) divided by45% ofthe average height (4.5). This is 10/4.5 ≈ 2.2.
+
+Let's simulate height prediction from two legs
+
+```{r}
+set.seed(909)
+N<-100
+height<-rnorm(N,10,2)
+leg_prop<-runif(N,0.4,0.5)
+
+#lenght of a leg=proportion of height +small noise
+left_leg<-leg_prop*height+rnorm(N,0,0.02)
+right_leg<-leg_prop*height+rnorm(N,0,0.02)
+
+d<-data.frame(height,leg_prop,left_leg,right_leg)
+precis(d)
+
+# lets model this relationship 
+m6.1<-quap(flist=alist(
+  height~dnorm(mu,sigma),
+  mu<-a+ll*left_leg+rl*right_leg,
+  a~dnorm(10,100),
+  ll~dnorm(2,10),
+  rl~dnorm(2,10),
+  sigma~dexp(1)
+),data=d)
+
+precis(m6.1)
+plot(precis(m6.1))
+```
+
+
+Why are we getting these ll and rl values if legs are strongly correlated with height?
+
+A good answer is to plot  their posterior: 
+
+```{r}
+par(mfrow=c(1,2))
+post <- extract.samples(m6.1) 
+plot( ll ~ rl , post , col=col.alpha(rangi2,0.1) , pch=16 )
+sum_blbr <- post$ll + post$rl
+dens( sum_blbr , col=rangi2 , lwd=2 , xlab="sum of bl and br" )
+
+```
+
+Can you see how the sum of both legs coefficient adds ~2.0? Well this is because the regression is trying to balance tehir values even they have almost the same information. From the regression perspective, it is like having:
+
+$y=Normal(\mu,\sigma)$
+
+$\mu_i=\alpha +(\beta_{l}+\beta_{r})x_i$
+
+The model might be fitting values well, but it is having the wrong interpretation and therefore, the wrong question: What is the value of knowing each leg’s length, after already knowing the other leg’s length?
+
+Now If we drop out one the legs to correct our model:
+
+$\mu_i=\alpha +(\beta_{l})x_i$
+
+```{r}
+# lets model this relationship 
+m6.2<-quap(flist=alist(
+  height~dnorm(mu,sigma),
+  mu<-a+ll*left_leg,
+  a~dnorm(10,100),
+  ll~dnorm(2,10),
+  # rl~dnorm(2,10),
+  sigma~dexp(1)
+),data=d)
+
+precis(m6.2)
+plot(precis(m6.2))
+
+par(mfrow=c(1,2))
+post2 <- extract.samples(m6.2) 
+dens( sum_blbr , col=rangi2 , lwd=2 , xlab="two legs model" )
+
+dens( post2$ll , col=rangi2 , lwd=2 , xlab="only one leg model" )
+
+```
+
+You can see how you are getting the same distribution and value of ~2 for ll.
+
+
+
+## 6.1.2 Milk dataset
+
+What is expected?
+Estimate the calories of milk based on its fat and lactose (density) content.
+
+```{r}
+
+data("milk")
+d<-milk
+d$K<-scale(d$kcal.per.g)
+d$L<-scale(d$perc.lactose)
+d$F<-scale(d$perc.fat)
+
+pairs( ~ kcal.per.g + perc.fat + perc.lactose , data=d , col=rangi2 )
+```
+
+```{r}
+# kcal.per.g regressed on perc.fat 
+m6.3 <- quap( alist( K ~ dnorm( mu , sigma ) ,
+                     mu <- a + bF*F , 
+                     a ~ dnorm( 0 , 0.2 ) , 
+                     bF ~ dnorm( 0 , 0.5 ) , 
+                     sigma ~ dexp( 1 )
+                     ) , data=d )
+# kcal.per.g regressed on perc.lactose 
+m6.4 <- quap( alist( K ~ dnorm( mu , sigma ) ,
+                     mu <- a + bL*L , 
+                     a ~ dnorm( 0 , 0.2 ) ,
+                     bL ~ dnorm( 0 , 0.5 ) , 
+                     sigma ~ dexp( 1 )
+                     ) , data=d )
+precis( m6.3 ) 
+precis( m6.4 )
+```
+
+Yoou can see of bivariate models are in agreement with the pairwise correlation above. Fat is positive correlated whereas lactose is negatively correlated. What happen when with plug both predictors together into a model.
+
+```{r}
+m6.5 <- quap( alist( K ~ dnorm( mu , sigma ) ,
+                     mu <- a + bL*L +bF*F , 
+                     a ~ dnorm( 0 , 0.2 ) ,
+                     bL ~ dnorm( 0 , 0.5 ) , 
+                     bF ~ dnorm( 0 , 0.5 ) , 
+                     sigma ~ dexp( 1 )
+                     ) , data=d )
+precis( m6.5 ) 
+
+```
+
+We see the same issue but with negative correlations. Lactose capture the same information about calories but in the opposite way (negative). We need to check biological principles to understand this. A mammal that nurses frequently usually less dense milk but high in sugar (lactose), meanwhile an infrequent mammal has more energy milk therefore high fat. Therefore, the variable of interest is density based on frequency of nursing which we dont have at the moment. This density is affecting fat and lactose content. Finally, the composition of fat and lactose determines the calories of milk.
+
+```{r}
+dag612<-dagitty("dag{
+                Dens->Lacto
+                Dens->Fat
+                Lacto->Kcal
+                Fat->Kcal
+}")
+coordinates(dag612) <- list( x=c(Lacto=0,Dens=1,Kcal=1,Fat=2) , y=c(Lacto=0.5,Dens=0.5,Kcal=1,Fat=0.5) )
+drawdag(dag612)
+```
+
+```{r}
+d <- milk 
+
+sim.coll <- function( r=0.9 ) { d$x <- rnorm( nrow(d) , mean=r*d$perc.fat ,
+                                              sd=sqrt( (1-r^2)*var(d$perc.fat) ) )
+  m <- lm( kcal.per.g ~ perc.fat + x , data=d ) 
+  sqrt( diag( vcov(m) ) )[2] # stddev of parameter
+}
+
+rep.sim.coll <- function( r=0.9 , n=100 ) { 
+  stddev <- replicate( n , sim.coll(r) ) 
+  mean(stddev)
+}
+
+r.seq <- seq(from=0,to=0.99,by=0.01) 
+stddev <- sapply( r.seq , function(z) rep.sim.coll(r=z,n=100) ) 
+plot( stddev ~ r.seq , type="l" , col=rangi2, lwd=2 , xlab="correlation" )
+
+```
+
+
+
+# 6.2 Post-treament bias
+
+We assume the model as a proportion. Plant at t=1 is higher than plant at t=0.
+
+```{r}
+set.seed(62)
+N<-100
+h0<-rnorm(N,10,2)
+treatment<-rep(0:1,each=N/2)
+
+fungus<-rbinom(N,
+               size = 1,# upper bound
+               prob=0.5-treatment*0.4)
+h1<-h0+rnorm(N,mean = 5-3*fungus)
+d<-data.frame(h0=h0,h1=h1,treatment=treatment,fungus=fungus)
+d$simp<-rlnorm(N,0,0.25)
+precis(d)
+```
+
+
+
+
+```{r}
+m6.6<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p~dlnorm(0,0.25),
+  sigma~dexp(1)
+),data = d)
+precis(m6.6)
+
+m6.7<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p<-a+bt*treatment+bf*fungus,
+  a~dnorm(0,0.2),
+  bt~dnorm(0,.5),
+  bf~dnorm(0,.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6.7)
+```
+
+Alpha is almost similar to P in model 6.6. Treatment seems to not have effect on h1, and fungus hurts a little bit (-0.24).
+
+Originally we want to know if treatment affects height. By controlling for fungus, we are asking a different question:
+Once we already know whether or not a plant developed fungus, does soil treatment matter for height?
+
+According to precis(m6.7), no it does not matter which does not make sense biologically speaking. Let's no add fungus because it is a consequence of being treated (post-treament):
+
+```{r}
+m6.8<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p<-a+bt*treatment,
+  a~dnorm(0,0.2),
+  bt~dnorm(0,.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6.8)
+```
+
+You can see how treatment has a positive effect on height. This is the DAG version of m6.7:
+
+```{r}
+library(dagitty) 
+plant_dag <- dagitty( "dag { 
+H_0 -> H_1 
+F -> H_1 
+T -> F
+}")
+coordinates( plant_dag ) <- list( x=c(H_0=0,T=2,F=1.5,H_1=1) , y=c(H_0=0,T=0,F=0,H_1=0) )
+drawdag( plant_dag ) 
+impliedConditionalIndependencies(plant_dag)
+```
+
+When we condition on F, h1 is d-separated of treatment because f is blocking.
+
+Take care of traps like:
+
+```{r}
+plant_dag <- dagitty( "dag { 
+H_0 -> H_1 
+M -> H_1 
+M-> F
+T -> F
+}")
+coordinates( plant_dag ) <- list( x=c(H_0=0,T=2,F=1.5,H_1=1,M=1.25) , y=c(H_0=0,T=0,F=0,H_1=0,M=0.1) )
+drawdag( plant_dag ) 
+```
+
+
+Let's simulate this unobserved moisture:
+
+```{r}
+N=1e4
+h0<-rnorm(N,10,2)
+treatment<-rep(0:1,each=N/2)
+M<-rbern(N)
+fungus<-rbinom(N,
+               size = 1,# upper bound
+               prob=0.5-treatment*0.4+M*0.3)
+
+h1<-h0+rnorm(N,mean = 5+3*M)
+
+d2<-data.frame(h0=h0,h1=h1,m=M,treatment=treatment,fungus=fungus)
+precis(d2)
+
+```
+
+```{r}
+m6.7b<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p<-a+bt*treatment+bf*fungus,
+  a~dnorm(0,0.2),
+  bt~dnorm(0,.5),
+  bf~dnorm(0,.5),
+  sigma~dexp(1)
+),data = d2)
+precis(m6.7b)
+
+m6.8b<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p<-a+bt*treatment,
+  a~dnorm(0,0.2),
+  bt~dnorm(0,.5),
+  sigma~dexp(1)
+),data = d2)
+precis(m6.8b)
+```
+
+
+Can you see how including fungus mislead h1 for a plant that does not bother about having the disease or not. Why M which is unobserved is having this effect ?
+
+
+# 6.3 Collider bias
+
+## Age on happines
+
+```{r}
+age_dag <- dagitty( "dag { 
+H -> M
+Age -> M
+}")
+coordinates( age_dag ) <- list( x=c(H=0, M=1, Age=2) , y=c(H=0,M=0,Age=0) )
+drawdag( age_dag ) 
+```
+
+```{r}
+d <- sim_happiness( seed=1977 , N_years=1000 ) 
+precis(d)
+d2 <- d[ d$age>17 , ] # only adults 
+d2$A <- ( d2$age - 18 ) / ( 65 - 18 ) # normalize (0 1)
+d2$mid<-d2$married+1
+```
+
+If we incorrectly  include the collider into the regression:
+
+```{r}
+m6.9 <- quap( alist(
+  happiness ~ dnorm( mu , sigma ), 
+  mu <- a[mid] + bA*A, 
+  a[mid] ~ dnorm( 0 , 1 ), 
+  bA ~ dnorm( 0 , 2 ), 
+  sigma ~ dexp(1)
+) , data=d2 )
+precis(m6.9,depth=2)
+```
+
+Age is negatively associated to happiness.If we don't include it, we can see how age is not related to happiness:
+
+
+```{r}
+m6.10 <- quap( alist(
+  happiness ~ dnorm( mu , sigma ), 
+  mu <- a+ bA*A, 
+  a ~ dnorm( 0 , 1 ), 
+  bA ~ dnorm( 0 , 2 ), 
+  sigma ~ dexp(1)
+) , data=d2 )
+precis(m6.10,depth=2)
+```
+
+## Education of grand parents on children education 
+
+(DAG):
+
+```{r}
+edu_dag <- dagitty( "dag { 
+G -> P 
+P -> C
+G -> C 
+U-> P
+U -> C
+}")
+coordinates( edu_dag ) <- list( x=c(G=0, P=1, C=1, U=1.5) , y=c(G=0, P=0, C=1, U=0.5) )
+drawdag( edu_dag ) 
+```
+
+
+
+```{r}
+N <- 200 # number of grandparent-parent-child triads 
+b_GP <- 1 # direct effect of G on P 
+b_GC <- 0 # direct effect of G on C 
+b_PC <- 1 # direct effect of P on C 
+b_U <- 2 # direct effect of U on P and C
+set.seed(1) 
+U <- 2*rbern( N , 0.5 ) - 1  # bad or good neighborhood
+G <- rnorm( N ) # grand parents with no influence
+P <- rnorm( N , b_GP*G + b_U*U )  # parents with influence from grand parents and neighborhood U
+C <- rnorm( N , b_PC*P + b_GC*G + b_U*U ) # child with influence from all
+d <- data.frame( C=C , P=P , G=G , U=U )
+precis(d)
+```
+
+
+
+```{r}
+# Without unmeasured neighborhood
+m6.11 <- quap( alist( C ~ dnorm( mu , sigma ), 
+                      mu <- a + b_PC*P + b_GC*G,
+                      a ~ dnorm( 0 , 1 ),
+                      c(b_PC,b_GC) ~ dnorm( 0 , 1 ),
+                      sigma ~ dexp( 1 )
+                      ), data=d )
+precis(m6.11)
+
+```
+
+The inferred effect of parents looks too big, almost twice as large as it should be from the original simulation. It is not surprising of this big effect because some of the correlation between parents and children are due to U.More surprising is that the model is confident that the direct effect of grandparents is to hurt their grandkids education (negative association). We can conclude that the regression is not wrong but drawing causal interpretation would be. 
+
+**Simpson’s paradox:** Including another predictor (Parents in this case) can reverse the direction of association between some other predictor (Grandparents) and the outcome (Child).
+
+Suddenly we can measure U (neighborhoods):
+
+```{r}
+# With unmeasured neighborhood to correct the collider
+m6.12 <- quap( alist( C ~ dnorm( mu , sigma ), 
+                      mu <- a + b_PC*P + b_GC*G + b_U*U, 
+                      a ~ dnorm( 0 , 1 ), 
+                      c(b_PC,b_GC,b_U) ~ dnorm( 0 , 1 ),
+                      sigma ~ dexp( 1 )
+                      ), data=d )
+precis(m6.12)
+```
+
+
+# 6.4 Confronting bias
+
+```{r}
+library(dagitty) 
+dag_6.1 <- dagitty( "dag {
+U [unobserved]
+X -> Y 
+X <- U <- A -> C -> Y 
+U -> B <- C
+}") 
+adjustmentSets( dag_6.1 , exposure="X" , outcome="Y" )
+drawdag( dag_6.1 ) 
+
+dag_6.2 <- dagitty( "dag { A -> D A -> M -> D A <- S -> M S -> W -> D
+}") 
+adjustmentSets( dag_6.2 , exposure="W" , outcome="D" )
+drawdag( dag_6.2 ) 
+```
+

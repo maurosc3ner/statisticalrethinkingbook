@@ -1,0 +1,419 @@
+---
+title: "Ch8 - Exercises"
+author: "Esteban Correa"
+date: "01/26/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r,include=F}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+```
+
+
+# Exercises
+
+## Easy
+
+### 8E1. 
+For each of the causal relationships below, name a hypothetical third variable that would lead to an interaction effect.
+(1) Bread dough rises because of yeast. 
+The quantity of sugar present in the mix.
+
+(2) Education leads to higher income. 
+Type of education (public or private) might mediate the effect of income because unmeaseured benefits such as networking and co-op.
+
+(3) Gasoline makes a car go.
+The aerodinamic coefficient influence fuel consumption of a car to go.
+
+### 8E2. 
+Which of the following explanations invokes an interaction?
+Options 1 and 3 invokes an interaction, the rest of examples are additive relationships.
+
+(1) Caramelizing onions requires cooking over low heat and making sure the onions do not dry out.
+
+Temperature and moisture interact together in the process of caramelization.
+
+(2) A car will go faster when it has more cylinders or when it has a better fuel injector. 
+
+(3) Most people acquire their political beliefs from their parents, unless they get them instead from their friends.
+
+political beliefs at home and outdoor might influence people's political view. right-wind families joined with friends from the same beliefs only reinforces right-wind views on the person. 
+
+(4) Intelligent animal species tend to be either highly social or have manipulative appendages (hands, tentacles, etc.).
+
+### 8E3. 
+For each of the explanations in 8E2, write a linear model that expresses the stated relationship. 
+
+Model for caramelizing onions based temperature (low and high) and moisture 
+
+$$\begin{aligned}
+C_i\sim Binomial(N_i,p_i)\\
+logit(p_i)=alpha_{T[i]}+\beta_{T[i]}*(moisture\_norm_i-\overline{moisture\_norm_i})\\
+\alpha_{T[i]}\sim Norm(1,0.1)\\
+\beta_{T[i]}\sim Norm(0,0.3)\\
+\sigma\sim Exponential(1)
+\end{aligned}
+$$
+
+Model for political beliefs from parents and friends:
+
+$$\begin{aligned}
+rightness_i\sim Normal(\mu_i,\alpha)\\
+\mu_i=\alpha+\beta_{p}PP_{std}+\beta_{f}PF_{std}+\beta_{p\&f}PP_{std}PF_{std} \\
+\alpha\sim Norm(0,0.2)\\
+\beta_{p}\sim Norm(0,0.1)\\
+\beta_{f}\sim Norm(0,0.1)\\
+\beta_{p\&f}\sim Norm(0,0.1)\\
+\sigma\sim Exponential(1)
+\end{aligned}
+$$
+
+## Medium.
+### 8M1.
+Recall the tulips example from the chapter. Suppose another set of treatments adjusted the temperature in the greenhouse over two levels: cold and hot. The data in the chapter were collected at the cold temperature. You find none of the plants grown under the hot temperature developed any blooms at all, regardless of the water and shade levels. Can you explain this result in terms of interactions between water, shade, and temperature?
+
+Hot temperature might seem to inhibit blooms no matter no shade and good water.
+
+### 8M2. 
+Can you invent a regression equation that would make the bloom size zero, whenever the temperature is hot?
+
+$$\mu_{i}=(1-TEMP_{i})(\alpha+\beta_{S}S_i+\beta_WW_i+\beta_{WS}S_iW_i)+(TEMP_{i})(\alpha+\beta_{S}S_i+\beta_WW_i+\beta_{WS}S_iW_i)$$
+When $TEMP_{i}=0$ (cold temperature), bloom size depends from shade and water and their interaction. On the other side, when $TEMP_{i}=1$ (hot temperature), bloom size is zero.
+
+### 8M3. 
+In parts of North America, ravens depend upon wolves for their food. This is because ravens are carnivorous but cannot usually kill or open carcasses of prey. Wolves however can and do kill and tear open animals, and they tolerate ravens co-feeding at their kills. This species relationship is generally described as a “species interaction.” Can you invent a hypothetical set of data on raven population size in which this relationship would manifest as a statistical interaction? Do you think the biological interaction could be linear? Why or why not?
+
+```{r}
+set.seed(83)
+# We can define ravens based on wolves population 
+# We make use of poisson because the type of variables is count
+
+wolves<-rpois(1e3,5)
+ravens<-rpois(1e3,sqrt(wolves)+sqrt(wolves))
+
+df<-data.frame(w=wolves,r=ravens)
+
+ggplot(df)+
+  geom_jitter(aes(x=w,y=r))+
+  geom_smooth(aes(x=w,y=r),colour = "red",
+              alpha = 0.9) +
+  # scale_y_continuous(breaks = c(0, 5)) +
+  labs(x = "Number of wolves", y = "Number of ravens") +
+  theme_minimal()
+```
+
+I believe the relationship might have some upper limit in terms of number of ravens per wolves. This is because co-feeding is not infinite and it can not be sustained in large wolves population where food competition might appear.
+
+## Hard.
+### 8H1.
+Return to the data(tulips) example in the chapter. Now include the bed variable as a predictor in the interaction model. Don’t interact bed with the other predictors; just include it as a main effect. Note that bed is categorical. So to use it properly, you will need to either construct dummy variables or rather an index variable, as explained in Chapter 6.
+
+```{r}
+data(tulips) 
+d <- tulips 
+str(d)
+d$blooms_std <- d$blooms / max(d$blooms) 
+d$water_cent <- d$water - mean(d$water) 
+d$shade_cent <- d$shade - mean(d$shade)
+
+# make variable to index Africa (1) or not (2) 
+d$bedIdx <- as.numeric(d$bed)
+
+# interaction
+m8.5 <- quap( alist(
+blooms_std ~ dnorm( mu , sigma ) ,
+mu <- a + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+a ~ dnorm( 0.5 , 0.25 ) , bw ~ dnorm( 0 , 0.25 ) , 
+bs ~ dnorm( 0 , 0.25 ) , 
+bws ~ dnorm( 0 , 0.25 ) , 
+sigma ~ dexp( 1 )
+) , data=d )
+precis(m8.5,depth = 1)
+
+# interaction+bed
+m8.5b <- quap( alist(
+blooms_std ~ dnorm( mu , sigma ) ,
+mu <- a[bedIdx] + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+a[bedIdx] ~ dnorm( 0.5 , 0.25 ) , 
+bw ~ dnorm( 0 , 0.25 ) , 
+bs ~ dnorm( 0 , 0.25 ) , 
+bws ~ dnorm( 0 , 0.25 ) , 
+sigma ~ dexp( 1 )
+) , data=d )
+
+precis(m8.5b,depth = 2)
+```
+
+
+### 8H2.
+Use WAIC to compare the model from **8H1** to a model that omits bed. What do you infer from this comparison? Can you reconcile the WAIC results with the posterior distribution of the bed coefficients?
+
+```{r}
+compare(m8.5,m8.5b,func = WAIC)
+compare(m8.5,m8.5b,func = PSIS)
+
+PSIS_m8.5b <- PSIS(m8.5b,pointwise=TRUE) 
+WAIC_m8.5b <- WAIC(m8.5b,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8.5b$k,waic=WAIC_m8.5b$penalty,loc=d$blooms)
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.5 | psis>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Ordinal regression (gaussian distribution, psis>0.5)")
+
+```
+
+Model 8.5b seems a good candidate for robust regression:
+
+```{r}
+# interaction+bed
+m8.5c <- quap( alist(
+blooms_std ~ dstudent(3, mu , sigma ) ,
+mu <- a[bedIdx] + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+a[bedIdx] ~ dnorm( 0.5 , 0.25 ) , 
+bw ~ dnorm( 0 , 0.25 ) , 
+bs ~ dnorm( 0 , 0.25 ) , 
+bws ~ dnorm( 0 , 0.25 ) , 
+sigma ~ dexp( 1 )
+) , data=d )
+
+compare(m8.5,m8.5b,m8.5c,func = WAIC)
+compare(m8.5,m8.5b,m8.5c,func = PSIS)
+
+PSIS_m8.5c <- PSIS(m8.5c,pointwise=TRUE) 
+WAIC_m8.5c <- WAIC(m8.5c,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8.5c$k,waic=WAIC_m8.5c$penalty,loc=d$blooms)
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.5 | psis>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Robust regression (t distribution, psis>0.5)")
+
+
+```
+
+
+### 8H3. 
+Consider again the data(rugged) data on economic development and terrain ruggedness, examined in this chapter. One of the African countries in that example, Seychelles, is far outside the cloud of other nations, being a rare country with both relatively high GDP and high ruggedness. Seychelles is also unusual, in that it is a group of islands far from the coast of mainland Africa, and its main economic activity is tourism.  
+
+```{r}
+data(rugged) 
+d <- rugged
+
+# because big gaps between GDP, you can make log version of outcome, there is not loss in information
+d$log_gdp <- log( d$rgdppc_2000 )
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+# rescale variables 
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp) 
+dd$rugged_norm <- dd$rugged / max(dd$rugged)
+# make variable to index Africa (1) or not (2) 
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+m8.3 <- quap( alist(
+  log_gdp_std ~ dnorm( mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_norm - mean(dd$rugged_norm) ) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( 1 )
+) , data=dd )
+
+precis(m8.3,depth = 2)
+
+PSIS_m8.3 <- PSIS(m8.3,pointwise=TRUE) 
+WAIC_m8.3 <- WAIC(m8.3,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8.3$k,waic=WAIC_m8.3$penalty,loc=dd$country)
+
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.4 | psis>0.4),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Ordinal regression (gaussian distribution, psis>0.5)")
+```
+
+(a) Focus on model m8.5 from the chapter. Use WAIC pointwise penalties and PSIS Pareto k values to measure relative influence of each country. By these criteria, is Seychelles influencing the results? Are there other nations that are relatively influential? If so, can you explain why?
+
+Lesotho is also influencing the results. Reasons of Lesotho high GDP could be related to its geographic position within South Africa the country with the highest GDP in Africa. Therefore, labor migration might be influencing its GDP beyond ruggedness.
+
+(b) Now use robust regression, as described in the previous chapter. Modify m8.5 to use a Student-t distribution with v = 2. Does this change the results in a substantial way?
+
+Student-t distribution is helping to reduce penalization with a worst performance in training data than original model. If we want to favour robustness against outliers, we may choose 8.3b.
+ 
+```{r}
+m8.3b <- quap( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_norm - mean(dd$rugged_norm) ) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( 1 )
+) , data=dd )
+
+precis(m8.3b,depth = 2)
+
+
+colors<-c("2"="#000000","1"="#8080ff")
+compare(m8.3,m8.3b,func=PSIS)
+# Figure 8.5
+PSIS_m8.3b <- PSIS(m8.3b,pointwise=TRUE) 
+WAIC_m8.3b <- WAIC(m8.3b,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8.3b$k,waic=WAIC_m8.3b$penalty,loc=dd$country)
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.4 | psis>0.4),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Robust regression (Student-t distribution, psis>0.5)")
+```
+ 
+
+
+### 8H4. 
+The values in data(nettle) are data on language diversity in 74 nations. The meaning of each column is given below. 
+(1) country: Name of the country 
+(2) num.lang: Number of recognized languages spoken 
+(3) area: Area in square kilometers (4) k.pop: Population, in thousands 
+(5) num.stations: Number of weather stations that provided data for the next two columns 
+(6) mean.growing.season: Average length of growing season, in months 
+(7) sd.growing.season: Standard deviation of length of growing season, in months
+
+Use these data to evaluate the hypothesis that language diversity is partly a product of food security. The notion is that, in productive ecologies, people don’t need large social networks to buffer them against risk of food shortfalls. This means ethnic groups can be smaller and more self-sufficient, leading to more languages per capita. In contrast, in a poor ecology, there is more subsistence risk, and so human societies have adapted by building larger networks of mutual obligation to provide food insurance. This in turn creates social forces that help prevent languages from diversifying. Specifically, you will try to model the number of languages per capita as the outcome variable:
+
+```{r, eval=F}
+d$lang.per.cap <- d$num.lang / d$k.pop
+```
+ 
+Use the logarithm of this new variable as your regression outcome. (A count model would be better here, but you’ll learn those later, in Chapter 11.) This problem is open ended, allowing you to decide how you address the hypotheses and the uncertain advice the modeling provides. If you think you need to use WAIC any place, please do. If you think you need certain priors, argue for them. If you think you need to plot predictions in a certain way, please do. Just try to honestly evaluate the main effects of both mean.growing.season and sd.growing.season, as well as their two-way interaction, as outlined in parts (a), (b), and (c) below. If you are not sure which approach to use, try several.
+
+```{r}
+data(nettle) 
+d <- nettle
+d$lang.per.cap <- d$num.lang / d$k.pop
+d$log.lang.per.cap <-log(d$lang.per.cap)
+ggplot(d)+
+  geom_point(aes(x=mean.growing.season,y=log(lang.per.cap)))+
+  geom_smooth(aes(x=mean.growing.season,y=log(lang.per.cap)),colour = "red",
+              alpha = 0.9)
+  
+```
+
+(a) Evaluate the hypothesis that language diversity, as measured by log(lang.per.cap), is positively associated with the average length of the growing season, mean.growing.season. Consider log(area) in your regression(s) as a covariate (not an interaction). Interpret your results.
+
+```{r}
+# make variable to index Africa (1) or not (2) 
+# dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+m8h4a <- quap( alist(
+  log.lang.per.cap ~ dnorm( mu , sigma ) ,
+  mu <- a + bMG*mean.growing.season+bA*log(area), 
+  a ~ dnorm( 0 , 0.1 ), 
+  bMG ~ dnorm( 0 , 0.5 ), 
+  bA ~ dnorm( 0 , 0.5 ), 
+  sigma ~ dexp( 1 )
+) , data=d )
+
+precis(m8h4a,depth = 1)
+```
+
+
+(b) Now evaluate the hypothesis that language diversity is negatively associated with the standard deviation of length of growing season, sd.growing.season. This hypothesis follows from uncertainty in harvest favoring social insurance through larger social networks and therefore fewer languages. Again, consider log(area) as a covariate (not an interaction). Interpret your results.
+
+```{r}
+# make variable to index Africa (1) or not (2) 
+# dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+m8h4b <- quap( alist(
+  log.lang.per.cap ~ dnorm( mu , sigma ) ,
+  mu <- a + bSD*sd.growing.season+bA*log(area), 
+  a ~ dnorm( 0 , 0.1 ), 
+  bSD ~ dnorm( 0 , 0.5 ), 
+  bA ~ dnorm( 0 , 0.5 ), 
+  sigma ~ dexp( 1 )
+) , data=d )
+
+precis(m8h4b,depth = 1)
+```
+
+(c) Finally, evaluate the hypothesis that mean.growing.season and sd.growing.season interact to synergistically reduce language diversity. The idea is that, in nations with longer average growing seasons, high variance makes storage and redistribution even more important than it would be otherwise. That way, people can cooperate to preserve and protect windfalls to be used during the droughts. These forces in turn may lead to greater social integration and fewer languages.
+
+```{r}
+# make variable to index Africa (1) or not (2) 
+# dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+m8h4c <- quap( alist(
+  log.lang.per.cap ~ dnorm(mu , sigma ) ,
+  mu <- a + bMG*mean.growing.season+bSD*sd.growing.season+bMGSD*mean.growing.season*sd.growing.season, 
+  a ~ dnorm( 0 , 0.1 ), 
+  bSD ~ dnorm( 0 , 0.5 ), 
+  bMG ~ dnorm( 0 , 0.5 ), 
+  bMGSD ~ dnorm( 0 , 0.5 ), 
+  sigma ~ dexp( 1 )
+) , data=d )
+
+precis(m8h4c,depth = 1)
+compare(m8h4a,m8h4b,m8h4c,func=PSIS)
+```
+
+```{r}
+
+PSIS_m8h4c <- PSIS(m8h4c,pointwise=TRUE) 
+WAIC_m8h4c <- WAIC(m8h4c,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8h4c$k,waic=WAIC_m8h4c$penalty,loc=d$country)
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.5 | psis>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Ordinal regression (gaussian distribution, psis>0.5)")
+```
+
+```{r}
+m8h4d<- quap( alist(
+  log.lang.per.cap ~ dstudent(2,mu , sigma ) ,
+  mu <- a + bMG*mean.growing.season+bSD*sd.growing.season+bMGSD*mean.growing.season*sd.growing.season, 
+  a ~ dnorm( 0 , 0.1 ), 
+  bSD ~ dnorm( 0 , 0.5 ), 
+  bMG ~ dnorm( 0 , 0.5 ), 
+  bMGSD ~ dnorm( 0 , 0.5 ), 
+  sigma ~ dexp( 1 )
+) , data=d )
+
+precis(m8h4d,depth = 1)
+compare(m8h4a,m8h4b,m8h4c,m8h4d,func=PSIS)
+
+PSIS_m8h4d <- PSIS(m8h4d,pointwise=TRUE) 
+WAIC_m8h4d <- WAIC(m8h4d,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8h4d$k,waic=WAIC_m8h4d$penalty,loc=d$country)
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.5 | psis>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Robust regression (t distribution, psis>0.5)")
+```
+

@@ -1,0 +1,604 @@
+---
+title: "Ch9 - Exercises"
+author: "Esteban Correa"
+date: "01/26/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r,include=F}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+```
+
+
+# Exercises
+
+## Easy
+
+### 9E1. 
+Which of the following is a requirement of the simple Metropolis algorithm?
+
+(1) The parameters must be discrete. 
+(2) The likelihood function must be Gaussian. 
+(3) The proposal distribution must be symmetric.
+
+The proposal must be symmetric.
+
+### 9E2. 
+Gibbs sampling is more efficient than the Metropolis algorithm. How does it achieve this extra efficiency? Are there any limitations to the Gibbs sampling strategy?
+
+Gibbs sampling achieves its efficiency by having better proposals. By making smart jumps, it requires fewer samples than a comparable metropolis algorithm. However, its smart jumps may tend to get stuck in small regions of sampling for high dimensional problems (higher probability of high correlations between parameters). Getting stuck do not help to explore all posibilities properly.
+
+### 9E3.
+Which sort of parameters can Hamiltonian Monte Carlo not handle? Can you explain why?
+
+HMC requires continuous pararemeters, therefore discrete ones need to be done differently in order to perform sampling.
+
+### 9E4. 
+Explain the difference between the effective number of samples, n_eff as calculated by Stan, and the actual number of samples.
+
+Number of samples are set by the function ulam and determine the samples of convergency. n_eff are the number of samples that converged after achieving stability (usually in the warmup). 
+
+### 9E5.
+Which value should Rhat approach, when a chain is sampling the posterior distribution correctly?
+
+Rhat should approach to 1 when posterior is being sampled correctly.
+
+### 9E6. 
+Sketch a good trace plot for a Markov chain, one that is effectively sampling from the posterior distribution. What is good about its shape? Then sketch a trace plot for a malfunctioning Markov chain. What about its shape indicates malfunction?
+
+```{r}
+traceplot(m9.4)
+traceplot(m9.5)
+```
+
+In a healthy model, chains usually overlap and remain around one value. n_eff approximates to the total number of samples. On the other side, unhealthy models exhibit chains that do not mix or overlap in any time of the traceplot. Also, n_eff is usually low.
+
+
+## Medium 
+
+### 9M1.
+Re-estimate the terrain ruggedness model from the chapter, but now using a uniform prior and an exponential prior for the standard deviation, sigma. The uniform prior should be dunif(0,10) and the exponential should be dexp(1). Do the different priors have any detectable influence on the posterior distribution?
+
+```{r}
+data(rugged) 
+d <- rugged
+d$log_gdp <- log( d$rgdppc_2000 )
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+# rescale variables 
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp) 
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+dat_8.3<-list(
+  log_gdp_std=dd$log_gdp_std,
+  rugged_std=dd$rugged_std,
+  rugged_mean=mean(dd$rugged_std),
+  cid=as.integer(dd$cid)
+)
+str(dat_8.3)
+```
+
+
+
+```{r}
+# baseline model
+m8.3b <- ulam( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_std-rugged_mean) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( 1 )
+) , data=dat_8.3 ,chains = 1,log_lik = T)
+
+precis(m8.3b,depth = 2)
+
+# dunif(0,10) model
+m8.3u <- ulam( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_std-rugged_mean) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dunif( 0,10 )
+) , data=dat_8.3 ,chains = 1,log_lik = T)
+
+precis(m8.3u,depth = 2)
+
+post1<-extract.samples(m8.3b,n = 1e4)
+post2<-extract.samples(m8.3u,n = 1e4)
+
+par(mfrow=c(1,2))
+#prior simulation
+a<-rexp(1e5,1)
+b<-runif(1e5,0,10)
+dens(a)
+dens(b,col="blue",add = T)
+
+dens(post1$sigma)
+dens(post2$sigma,col="blue",add=T)
+```
+
+```{r}
+compare(m8.3b,m8.3u)
+```
+
+There is not detectable differences in terms of parameters, intervals, n_eff or rhat rather than uniform distribution has a better WAIC score and a slightly lower penalization WAIC. We can observe how the data changed our beliefs to similar posteriors
+
+
+### 9M2.
+The Cauchy and exponential priors from the terrain ruggedness model are very weak. They can be made more informative by reducing their scale. Compare the dcauchy and dexp priors for progressively smaller values of the scaling parameter. As these priors become stronger, how does each influence the posterior distribution?
+
+dexp(0.1), dexp(0.01)
+
+```{r}
+m8.3b_a <- ulam( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_std-rugged_mean) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( .1 )
+) , data=dat_8.3 ,chains = 1,log_lik = T)
+
+show(m8.3b_a)
+precis(m8.3b_a,depth = 2)
+
+m8.3b_b <- ulam( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_std-rugged_mean) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( .01 )
+) , data=dat_8.3 ,chains = 1,log_lik = T)
+
+show(m8.3b_b)
+precis(m8.3b_b,depth = 2)
+
+compare(m8.3b,m8.3b_a,m8.3b_b)
+```
+
+dcauchy
+
+```{r}
+m8.3c_a <- ulam( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_std-rugged_mean) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dcauchy(0,2.5)
+) , data=dat_8.3 ,chains = 1,iter=1e4,log_lik = T)
+precis(m8.3c_a,depth = 2)
+post1<-extract.samples(m8.3c_a,n = 1e4)
+
+m8.3c_b <- ulam( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_std-rugged_mean) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dcauchy(0,1)
+) , data=dat_8.3 ,chains = 1,iter=1e4,log_lik = T)
+precis(m8.3c_b,depth = 2)
+post2<-extract.samples(m8.3c_b,n = 1e4)
+
+m8.3c_c <- ulam( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_std-rugged_mean) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dcauchy(0,.1)
+) , data=dat_8.3 ,chains = 1,iter=1e4,log_lik = T)
+precis(m8.3c_c,depth = 2)
+post3<-extract.samples(m8.3c_c,n = 1e4)
+
+par(mfrow=c(1,3))
+dens(post1$sigma)
+dens(post2$sigma)
+dens(post3$sigma)
+
+
+```
+
+There is already not much difference in the posterior for sigma.
+
+### 9M3.
+Re-estimate one of the Stan models from the chapter, but at different numbers of warmup iterations. Be sure to use the same number of sampling iterations in each case. Compare the n_eff values. How much warmup is enough?
+
+Depending of models it usually takes 200-300 iterations in the warmup to optimize size and number of steps.
+
+## Hard
+
+### 9H1.
+Run the model below and then inspect the posterior distribution and explain what it is accomplishing. Compare the samples for the parameters a and b. Can you explain the different trace plots, using what you know about the Cauchy distribution?
+
+```{r}
+#prior simulation
+a<-rnorm(1e5,0,1)
+b<-rcauchy(1e5,0,1)
+par(mfrow=c(1,2))
+dens(a)
+dens(b)
+mp <- map2stan( 
+  alist( a ~ dnorm(0,1), 
+         b ~ dcauchy(0,1)),
+data=list(y=1), start=list(a=0,b=0), iter=1e4, warmup=100 , WAIC=FALSE )
+post<-extract.samples(mp)
+
+dens(post$a)
+dens(post$b)
+```
+
+Based on plots, Cauchy prior behaves similarly than student-t test, very tight (more robust) compared to normal distribution. There is no change from priors to posteriors, that's simply because we did not specify any likelihood or data to update our beliefs. So HMC is sampling directly from priors.
+
+### 9H2. 
+Recall the divorce rate example from Chapter 5. Repeat that analysis, using ulam() this time, fitting models m5.1, m5.2, and m5.3. Use compare to compare the models on the basis ofWAIC or PSIS. Explain the results.
+
+Let's start from "5.1 Spurious association" dataset:
+
+```{r}
+data("WaffleDivorce")
+
+d<-WaffleDivorce
+d$MA<-scale(d$MedianAgeMarriage)
+d$D<-scale(d$Divorce)
+d$MR<-scale(d$Marriage)
+
+dat_5<-list(
+  MA=d$MA,
+  D=d$D,
+  MR=d$MR
+)
+str(dat_5)
+
+m5.1<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bma*MA,
+  a~dnorm(0,0.2),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5.1)
+
+m5.1_hmc <- ulam( alist(
+  D ~ dnorm(mu , sigma ) ,
+  mu <- a+bma*MA , 
+  a ~ dnorm( 0, 0.2 ), 
+  bma~ dnorm( 0, 0.5), 
+  sigma ~ dcauchy(0,.1)
+) , data=dat_5 ,chains = 1,iter=1e4,log_lik = T)
+precis(m5.1_hmc,depth = 2)
+
+compare(m5.1,m5.1_hmc)
+```
+
+model 5.2
+
+```{r}
+m5.2<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR,
+  a~dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5.2)
+
+m5.2_hmc <- ulam( alist(
+  D ~ dnorm(mu , sigma ) ,
+  mu <- a+bmr*MR , 
+  a ~ dnorm( 0, 0.2 ), 
+  bmr~ dnorm( 0, 0.5), 
+  sigma ~ dcauchy(0,.1)
+) , data=dat_5 ,chains = 1,iter=1e4,log_lik = T)
+precis(m5.2_hmc,depth = 2)
+
+compare(m5.2,m5.2_hmc)%>% 
+  as_tibble(rownames = "Model") %>% 
+  knitr::kable(digits = 2)
+```
+
+model 5.3
+
+```{r}
+m5.3<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu <- a+bmr*MR+bma*MA, 
+  a~dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5.3)
+
+m5.3_hmc <- ulam( alist(
+  D ~ dnorm(mu , sigma ) ,
+  mu <- a+bmr*MR+bma*MA, 
+  a ~ dnorm( 0, 0.2 ), 
+  bmr~ dnorm( 0, 0.5), 
+  bma~ dnorm( 0, 0.5), 
+  sigma ~ dexp(1)
+) , data=dat_5 ,chains = 1,iter=1e4,log_lik = T)
+precis(m5.3_hmc,depth = 2)
+
+compare(m5.3,m5.3_hmc)
+
+plot(coeftab(m5.1_hmc,m5.2_hmc,m5.3_hmc),par=c("bma","bmr"))
+```
+
+
+
+After running m5.1, m5.2, and m5.3 with same priors, ULAM versions always outperformed quap versions with lower WAIC and less effective parameters.
+
+
+### 9H3.
+Sometimes changing a prior for one parameter has unanticipated effects on other parameters. This is because when a parameter is highly correlated with another parameter in the posterior, the prior influences both parameters. Here’s an example to work and think through. Go back to the leg length example in Chapter 5. Here is the code again, which simulates height and leg lengths for 100 imagined individuals:
+
+```{r}
+N <- 100 # number of individuals
+height <- rnorm(N,10,2) # sim total height of each 
+leg_prop <- runif(N,0.4,0.5) # leg as proportion of height
+leg_left <- leg_prop*height + # sim left leg as proportion + error
+  rnorm( N , 0 , 0.02 )
+leg_right <- leg_prop*height +    # sim right leg as proportion + error
+  rnorm( N , 0 , 0.02 ) 
+
+# combine into data frame
+d <- data.frame(height,leg_left,leg_right)
+```
+
+model 5.8 but using ulam:
+
+```{r}
+m5.8s <- ulam( alist(
+height ~ dnorm( mu , sigma ) , 
+mu <- a + bl*leg_left + br*leg_right , 
+a ~ dnorm( 10 , 100 ) , 
+bl ~ dnorm( 2 , 10 ) , 
+br ~ dnorm( 2 , 10 ) , 
+sigma ~ dexp( 1 )
+) , data=d, chains=4, log_lik=TRUE,start=list(a=10,bl=0,br=0.1,sigma=1) )
+
+
+
+```
+
+
+```{r}
+m5.8s2 <- ulam( alist(
+height ~ dnorm( mu , sigma ) , 
+mu <- a + bl*leg_left + br*leg_right , 
+a ~ dnorm( 10 , 100 ) , 
+bl ~ dnorm( 2 , 10 ) , 
+br ~ dnorm( 2 , 10 ) , 
+sigma ~ dexp( 1 )
+) , data=d, chains=4,log_lik=TRUE, 
+constraints=list(br="lower=0"),
+start=list(a=10,bl=0,br=0.1,sigma=1) )
+
+precis(m5.8s2)
+
+```
+
+```{r}
+extract.samples(m5.8s) %>% 
+  as_tibble() %>% 
+  add_column(model = "m5.8s") %>% 
+  full_join(
+    extract.samples(m5.8s2) %>%
+      as_tibble() %>%
+      add_column(model = "m5.8s2")
+
+  ) %>%
+  pivot_longer(cols = -model, 
+               names_to = "estimate") %>%
+  ggplot(aes(value, fill = model)) +
+  geom_density(colour = "grey", alpha = 0.7) +
+  facet_wrap(~estimate, scales = "free") +
+  scale_fill_manual(values = c("red", "blue")) +
+  scale_y_continuous(breaks = 0, labels = NULL) +
+  theme_minimal() +
+  labs(y = NULL, fill = "Model", 
+       x = "Posterior estimate") +
+  theme(legend.position = c(0.9, 0.9), 
+        legend.background = element_rect(colour = "white"))
+```
+
+
+
+You can see how br is limited from zero graphically. The constraint slightly moves br to the right and bl to the left (because they are negatively correlated and model want to keep this information).
+
+
+### 9H4
+For the two models fit in the previous problem, use WAIC or PSIS to compare the effective numbers of parameters for each model. You will need to use log_lik=TRUE to instruct ulam() to compute the terms that both WAIC and PSIS need. Which model has more effective parameters? Why?
+
+
+
+```{r}
+compare(m5.8s,m5.8s2)
+```
+
+After checking WAIC, there is not much difference in terms of effective parameters between the two models.
+
+
+### 9H5.
+Modify the Metropolis algorithm code from the chapter to handle the case that the island populations have a different distribution than the island labels. This means the island’s number will not be the same as its population.
+
+
+```{r}
+numweeks=1e5
+positions<-rep(0,numweeks)
+currentIsland=10
+for (i in 1:numweeks){
+  
+  positions[i]<-currentIsland
+  # he flips a coin 
+  
+  nextIsland=currentIsland+sample(c(-1,1),size=1,replace=T) # takes a sample from c vector
+  if(nextIsland<1)
+    nextIsland<-10
+  if(nextIsland>10)
+    nextIsland<-1
+  
+  #move
+  prob2move<-nextIsland/currentIsland
+  # print(prob2move)
+  if (runif(1)<prob2move){
+    currentIsland<-nextIsland #move
+  }else{
+    currentIsland<-currentIsland #stay additional week
+  }
+  
+}
+#first 100 visits
+plot( 1:200 , positions[1:200] )
+plot( table( positions ) )
+```
+
+As explained by Gregor (https://gregor-mathes.netlify.app/2021/03/31/rethinking-chapter-9/#medium-practices). We update prob2move to be based on population and not by ordered index.
+
+
+```{r}
+set.seed(96)
+islands<-data.frame(current=1:10,population=rpois(10,10))
+islands
+
+numweeks=1e5
+positions<-rep(0,numweeks)
+currentIsland=10
+for (i in 1:numweeks){
+  
+  positions[i]<-islands$current[currentIsland]
+  # he flips a coin 
+  
+  nextIsland=islands$current[currentIsland]+sample(c(-1,1),size=1,replace=T) # takes a sample from c vector
+  if(nextIsland<1)
+    nextIsland<-10
+  if(nextIsland>10)
+    nextIsland<-1
+  
+  #move
+  prob2move<-islands$population[nextIsland]/islands$population[currentIsland]
+  # print(prob2move)
+  if (runif(1)<prob2move){
+    currentIsland<-islands$current[nextIsland] #move
+  }else{
+    currentIsland<-islands$current[currentIsland] #stay additional week
+  }
+  
+}
+#first 100 visits
+plot( 1:200 , positions[1:200] )
+plot( table( positions ) )
+
+
+```
+
+We can see how island #3 followed by #2 and #4 has the biggest number of visits. Because island #3 is the most populated.
+
+### 9H6.
+Modify the Metropolis algorithm code from the chapter to write your own simple MCMC estimator for globe tossing data and model from Chapter.
+
+```{r}
+
+myMCMCBinomial<-function(water=6,total_n=9,steps=1e5){
+  
+  probabilities<-rep(0,steps)
+  probabilities[1]<-0.5
+  for (i in 2:steps){
+  
+    # rules for new probability:
+    # 1. Gaussian
+    # p_new<-rnorm( 1 , probabilities[i-1] , 0.1 )
+    # 2. Uniform
+    p_new<-probabilities[i-1]+runif( 1 , -0.1 , 0.1 )
+    # he flips a coin 
+    
+    #set the boundaries between 0-1
+    if(p_new<0)
+      p_new<-abs(p_new)
+    if(p_new>1)
+      p_new<-2-p_new
+    
+    #binomial likelihoods
+    lkh_cur<-dbinom(water,size=total_n,prob = probabilities[i-1])
+    lkh_new<-dbinom(water,size=total_n,prob = p_new)
+    # compute posteriors
+    prob_current <- lkh_cur * dunif(probabilities[i-1])
+    prob_proposal <- lkh_new * dunif(p_new)
+    #move
+    prob2move<-prob_proposal/prob_current
+    # print(prob2move)
+    if (runif(1)<prob2move){
+      probabilities[i]<-p_new #move
+    }else{
+      probabilities[i]<-probabilities[i-1] #move #stay additional week
+    }
+    
+  }
+  probabilities
+}
+```
+
+
+```{r}
+probabilities<-myMCMCBinomial(water=6,total_n=9,steps=1e5)
+
+
+tibble(results = probabilities) %>% 
+  ggplot(aes(x = 1:steps, results)) +
+  geom_line(
+            colour = "red") +
+  geom_smooth(method = "lm")+
+  labs(y = "Probability water", 
+       x = "Step") +
+  theme_minimal()
+
+tibble(results = probabilities) %>% 
+  ggplot() +
+  geom_density(aes(results), 
+               colour = "brown", fill = "brown", 
+               alpha = 0.8) +
+  theme_minimal() +
+  labs(x = "Probability water", 
+       y = NULL) +
+  scale_y_continuous(breaks = NULL) 
+```
+
+multichain:
+
+```{r}
+
+chain1<-myMCMCBinomial(water=6,total_n=9,steps=1e5)
+chain2<-myMCMCBinomial(water=6,total_n=9,steps=1e5)
+chain3<-myMCMCBinomial(water=6,total_n=9,steps=1e5)
+chain4<-myMCMCBinomial(water=6,total_n=9,steps=1e5)
+
+multi_chains <- tibble(p_samples = c(chain1, chain2, 
+                     chain3, chain4), 
+       chain = as_factor(rep(1:4, each = 1e5)))
+
+multi_chains %>%
+  add_column(steps = rep(1:1e5, 4)) %>% 
+  ggplot() +
+  geom_line(aes(steps, p_samples, 
+                colour = chain), 
+            alpha = 0.8) +
+  scale_colour_manual(values = c("red", "blue", "brown", "grey")) +
+  labs(y = "Probability water", 
+       x = "Step") +
+  theme_minimal()
+
+multi_chains %>% 
+  ggplot() +
+  geom_density(aes(p_samples), 
+               colour = "red", fill = "red", 
+               alpha = 0.8) +
+  theme_minimal() 
+```
+
+
+
+
+

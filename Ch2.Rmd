@@ -1,0 +1,412 @@
+install.packages(c("devtools","mvtnorm","loo","coda"),dependencies=TRUE)
+library(devtools)
+install_github("rmcelreath/rethinking",ref="Experimental")
+
+
+```{r}
+library(rethinking)
+```
+
+
+The relative number of ways to get six water with p=0.5
+
+```{r}
+dbinom( 6 , size=9 , prob=0.5 )
+# similar than this equation:
+(factorial(6+3)/(factorial(6)*factorial(3)))*(0.5^6)*(1-0.5)^3
+```
+
+Getting 2,4, and 8 water tosses
+
+```{r}
+dbinom( 2 , size=9 , prob=0.5 )
+dbinom( 4 , size=9 , prob=0.5 )
+dbinom( 8 , size=9 , prob=0.5 )
+```
+
+
+## motor engines
+
+Grid
+
+```{r}
+myGrid<-seq(from=0, to=1, length.out = 20)
+
+#Prior
+myPrior<-rep(1,20)
+
+# likelihood at each value of the grid
+# Getting 6 tosses out of 9 with prob [0.0-1.0]
+myLikelihood<-dbinom(6,9,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+plot(x=myGrid,y=myLikelihood,type="b")
+
+plot(x=myGrid,y=myPosterior,type="b")
+
+```
+
+
+```{r}
+n=5
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-rep(1,n)
+
+# likelihood at each value of the grid
+# Getting 6 tosses out of 9 with prob [0.0-1.0]
+myLikelihood<-dbinom(6,9,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+plot(x=myGrid,y=myLikelihood,type="b")
+
+plot(x=myGrid,y=myPosterior,type="b")
+
+```
+
+n=1000
+
+```{r}
+n=1000
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-rep(1,n)
+
+# likelihood at each value of the grid
+# Getting 6 tosses out of 9 with prob [0.0-1.0]
+myLikelihood<-dbinom(6,9,prob = myGrid)
+# myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+plot(x=myGrid,y=myLikelihood,type="b")
+
+plot(x=myGrid,y=myPosterior,type="b")
+
+```
+
+Let's change the uniform prior
+
+```{r}
+n=100
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-ifelse(myGrid<0.5,0,1)
+
+# likelihood at each value of the grid
+# Getting 6 tosses out of 9 with prob [0.0-1.0]
+myLikelihood<-dbinom(6,9,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,3))    # set the plotting area into a 1*3 array
+plot(x=myGrid,y=myLikelihood,type="b",xlab="Likelihood")
+plot(x=myGrid,y=myPrior,type="b",xlab = "Prior")
+plot(x=myGrid,y=myPosterior,type="b",xlab="Posterior")
+
+
+#Prior
+myPrior<-exp(-5*abs(myGrid-0.5))
+
+# likelihood at each value of the grid
+# Getting 6 tosses out of 9 with prob [0.0-1.0]
+myLikelihood<-dbinom(6,9,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,3))    # set the plotting area into a 1*3 array
+plot(x=myGrid,y=myLikelihood,type="b",xlab = "Likelihood")
+plot(x=myGrid,y=myPrior,type="b",xlab = "Prior")
+plot(x=myGrid,y=myPosterior,type="b",xlab = "Posterior")
+```
+
+# Quadratic Approximation
+
+```{r}
+
+
+globe.qa<-quap(
+  alist(
+    W ~ dbinom(W+L,p),
+    p ~ dunif(0,1)
+  ),
+  data=list(W=6,L=3)
+)
+
+precis(globe.qa)
+globe.qa<-quap(
+  alist(
+    W ~ dbinom(W+L,p),
+    p ~ dunif(0,1)
+  ),
+  data=list(W=12,L=6)
+)
+
+precis(globe.qa)
+globe.qa<-quap(
+  alist(
+    W ~ dbinom(W+L,p),
+    p ~ dunif(0,1)
+  ),
+  data=list(W=24,L=12)
+)
+
+precis(globe.qa)
+```
+
+
+Let's compare with the exact calculation
+
+
+```{r}
+
+par(mfrow=c(1,3))    # set the plotting area into a 1*3 array
+W<-6
+L<-3
+curve(dbeta(x,W+1,L+1),from=0,to=1, xlab="Prop of Water",ylab="Density")
+curve(dnorm(x,0.67,0.16),lty=2,add=T, col="blue")
+
+W<-6*2
+L<-3*2
+curve(dbeta(x,W+1,L+1),from=0,to=1, xlab="Prop of Water",ylab="")
+curve(dnorm(x,0.67,0.11),lty=2,add=T, col="blue")
+
+W<-6*4
+L<-3*4
+curve(dbeta(x,W+1,L+1),from=0,to=1, xlab="Prop of Water",ylab="")
+curve(dnorm(x,0.67,0.08),lty=2,add=T, col="blue")
+```
+
+
+```{r}
+library(rethinking)
+n_samples<-1000
+p<-rep(NA,n_samples)
+p[1]<-0.5 # initial prob
+W<-6
+L<-3
+for(i in 2:n_samples){
+  
+  p_new<-rnorm(n=1,mean = p[i-1],sd = 0.1)
+  # we correct the new probability being positive or within [0-1]
+  if(p_new<0) p_new<-abs(p_new)
+  if(p_new>1) p_new<-2-p_new
+  q0<-dbinom(W,W+L,p[i-1])
+  q1<-dbinom(W,W+L,p_new)
+  # one random uniform number is LT than ratio new/old 
+  p[i]<-ifelse(runif(1)<q1/q0,p_new,p[i-1])
+}
+  
+dens(p,xlim=c(0,1))
+curve(dbeta(x,W+1,L+1),lty=2,add=T,col="blue")
+
+```
+
+
+
+
+## Exercises
+
+### Medium
+
+**2M1**
+
+```{r}
+# 1)W, W, W
+
+n=100
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-rep(1,n)
+
+# likelihood at each value of the grid
+# Getting 3 tosses out of 3 with prob [0.0-1.0]
+myLikelihood<-dbinom(3,3,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,2))
+plot(x=myGrid,y=myLikelihood,type="b")
+plot(x=myGrid,y=myPosterior,type="b")
+
+
+```
+
+
+```{r}
+# 2)W, W, W, L
+
+n=100
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-rep(1,n)
+
+# likelihood at each value of the grid
+# Getting 3 tosses out of 3 with prob [0.0-1.0]
+myLikelihood<-dbinom(3,4,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,2))
+plot(x=myGrid,y=myLikelihood,type="b")
+plot(x=myGrid,y=myPosterior,type="b")
+
+
+```
+
+```{r}
+# 3)L, W, W, L, W, W, W
+
+n=100
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-rep(1,n)
+
+# likelihood at each value of the grid
+# Getting 3 tosses out of 3 with prob [0.0-1.0]
+myLikelihood<-dbinom(5,7,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,2))
+plot(x=myGrid,y=myLikelihood,type="b")
+plot(x=myGrid,y=myPosterior,type="b")
+
+
+```
+
+**2M2**
+
+```{r}
+# 1)W, W, W
+
+n=100
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-ifelse(myGrid>0.5,2,0)
+
+# likelihood at each value of the grid
+# Getting 3 tosses out of 3 with prob [0.0-1.0]
+myLikelihood<-dbinom(3,3,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,3))
+plot(x=myGrid,y=myLikelihood,type="b")
+plot(x=myGrid,y=myPrior,type="b")
+plot(x=myGrid,y=myPosterior,type="b")
+
+```
+
+
+```{r}
+# 1)W, W, W
+
+n=100
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-ifelse(myGrid>0.5,2,0)
+
+# likelihood at each value of the grid
+# Getting 3 tosses out of 3 with prob [0.0-1.0]
+myLikelihood<-dbinom(3,4,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,3))
+plot(x=myGrid,y=myLikelihood,type="b")
+plot(x=myGrid,y=myPrior,type="b")
+plot(x=myGrid,y=myPosterior,type="b")
+
+```
+
+
+```{r}
+# 1)W, W, W
+
+n=100
+myGrid<-seq(from=0, to=1, length.out = n)
+
+#Prior
+myPrior<-ifelse(myGrid>0.5,2,0)
+
+# likelihood at each value of the grid
+# Getting 3 tosses out of 3 with prob [0.0-1.0]
+myLikelihood<-dbinom(5,7,prob = myGrid)
+myLikelihood
+# compute bayes rule without standardization
+unstd.posterior<-myLikelihood*myPrior
+
+# Standardized posterior
+myPosterior<-unstd.posterior/sum(unstd.posterior)
+
+# plot
+par(mfrow=c(1,3))
+plot(x=myGrid,y=myLikelihood,type="b")
+plot(x=myGrid,y=myPrior,type="b")
+plot(x=myGrid,y=myPosterior,type="b")
+
+```
+
+
+
+

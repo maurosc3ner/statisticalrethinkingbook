@@ -1,0 +1,488 @@
+---
+title: "Ch3"
+author: "Esteban Correa"
+date: "12/27/2021"
+output: html_document
+---
+
+```{r}
+library(rethinking)
+memory.size()
+rm(list = ls())
+memory.limit(size=64000)
+gc()
+```
+
+# 3.1 Sampling from a grid-approximate posterior
+
+Posterior using grid approximation reminder
+
+```{r}
+# grid from zero to 1
+p_grid<-seq(from=0, to=1, length.out = 1000)
+
+# uniform prior
+prob_p=rep(1,1000)
+
+# 6 water from 9 tosses
+prob_data<-dbinom(6,size = 9,prob=p_grid)
+
+unstd_posterior<-prob_data*prob_p
+#standarized
+posterior<-unstd_posterior/sum(unstd_posterior)
+
+
+```
+
+```{r}
+n_draws<-1e5
+samples<-sample(p_grid, prob=posterior, size = n_draws, replace = T)
+par(mfrow=c(1,2))
+plot(samples,col="blue")
+dens(samples,col="blue")
+```
+
+# 3.2 How to summarize a posterior distribution
+
+## 3.2.2 Intervals
+
+```{r}
+# using the grid
+sum(posterior[p_grid<0.5])
+
+#using the samples
+sum(samples<0.5)/n_draws
+
+# for a defined interval
+sum(samples>0.5 & samples<0.75)/n_draws
+
+#below 80th percentile
+quantile(samples,0.8)
+
+# within 10% and 90% (Percentile Intervals [PI])
+# Equally balanced draws for both tails
+quantile(samples,c(0.1,0.9))
+PI(samples,prob=0.8)
+
+
+# Highest posterior density interval
+# Narrow interval containing the highest specified probability mass
+HPDI(samples,prob=0.5)
+
+```
+
+## 3.2.3 Point estimates
+
+```{r}
+# Maximum a posteriori estimate (MAP) or the mean
+# using grid approximation
+p_grid[which.max(posterior)]
+
+# using samples
+chainmode(samples, adj=0.01)
+
+mean(samples)
+
+median(samples)
+
+```
+
+All of them are different, the right one depends of the loss function. Generally, we look to minimizes the difference or the distance between our decision (d) and the correct value (p). It is equal to the median
+
+```{r}
+# for one value
+sum(posterior*abs(0.5-p_grid))
+
+# for all the distribution [0,1]
+loss<-sapply(p_grid, function(d) {sum(posterior*abs(d-p_grid)  )} )
+p_grid[which.min(loss)]
+
+par(mfrow=c(1,2))
+dens(samples)
+abline(v=mean(samples),col="red")
+abline(v=median(samples),col="blue")
+
+plot(p_grid,loss)
+abline(v=p_grid[which.min(loss)],col="red")
+
+
+```
+
+# 3.3 Sampling to simulate prediction
+
+
+```{r}
+N=2   # number of tosses
+dbinom(0:2,size=N,prob=0.7)
+
+```
+
+There are 9% of possibility seeing 0 water, 42% chance of 1 water, and a 49% chance of two waters.
+
+
+
+```{r}
+rbinom(1,size=N,prob = 0.7) # it means X water in two tosses
+rbinom(10,size=N,prob = 0.7) 
+
+# lets generate 10K
+dummy_data<-rbinom(1e5,size=2,prob=0.7)
+
+table(dummy_data)/1e5
+
+```
+
+You can see how several W converge to the initial values to (9%, 42%, 49%). Now let's generate 10k  with one fixed probability
+
+```{r}
+dummy_data2<-rbinom(1e5,size=9,prob=.7)
+simplehist(dummy_data2,xlab="dummy water count")
+```
+
+What about using samples to create the posterior predictive distribution
+
+```{r}
+dummy_data3<-rbinom (1e5,size=9, prob = samples)
+simplehist(dummy_data3,xlab="Probability of water")
+```
+
+
+# Exercises
+
+## easy 
+
+```{r}
+n=1e3
+p_grid_ex<-seq(from=0,to=1,length.out = n)
+prior_ex<-rep(1,n)
+lkh_ex<-dbinom(6,size=9,prob = p_grid_ex)
+posterior_ex<-lkh_ex*prior_ex
+#we normalize
+posterior_ex<-posterior_ex/sum(posterior_ex)
+set.seed(100)
+n_draws_ex<-1e4
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+
+par(mfrow=c(1,2))
+plot(samples_ex,col="blue")
+dens(samples_ex,col="blue")
+```
+
+
+### 3E1 How much posterior probability lies below p = 0.2?
+
+```{r}
+# Three ways to do it
+# using the grid
+sum(posterior_ex[p_grid_ex<0.2])
+
+#using the samples
+sum(samples_ex<0.2)/n_draws_ex
+
+# for a defined interval
+sum(samples_ex>=0 & samples_ex<0.2)/n_draws_ex
+```
+
+### 3E2 How much posterior probability lies below p = 0.8?
+
+```{r}
+# Three ways to do it
+# using the grid
+sum(posterior_ex[p_grid_ex<0.8])
+
+#using the samples
+sum(samples_ex<0.8)/n_draws_ex
+
+# for a defined interval
+sum(samples_ex>0.0 & samples_ex<0.8)/n_draws_ex
+```
+
+### 3E3 How much posterior probability lies between p = 0.2 and p = 0.8?
+
+```{r}
+# for a defined interval
+sum(samples_ex>0.2 & samples_ex<0.8)/n_draws_ex
+```
+
+
+### 3E4. 20% of the posterior probability lies below which value of p?
+
+```{r}
+# using the grid
+sum(posterior_ex[p_grid_ex<0.001])
+sum(samples_ex<=0.001)/n_draws_ex
+quantile(samples,c(0,0.001))
+```
+
+20 % of posterior probability lies below p=0.001.
+
+### 3E5. 20% of the posterior probability lies above which value of p?
+
+```{r}
+quantile(samples_ex,c(0.8801,1))
+```
+
+20 % of posterior probability lies above of p=0.8801.
+
+
+### 3E6. Which values of p contain the narrowest interval equal to 66% of the posterior probability?
+
+```{r}
+HPDI(samples_ex,prob = 0.66)
+```
+
+### 3E7. Which values of p contain 66% of the posterior probability, assuming equal posterior probability both below and above the interval?
+
+```{r}
+PI(samples_ex,prob = 0.66)
+```
+
+
+```{r}
+# par(mfrow=c(1,2))
+dens(samples_ex)
+abline(v=0.512,col="red")
+abline(v=0.784,col="red")
+abline(v=0.498,col="blue")
+abline(v=0.773,col="blue")
+```
+
+## Medium
+
+### 3M1. Suppose the globe tossing data had turned out to be 8 water in 15 tosses. Construct the posterior distribution, using grid approximation. Use the same flat prior as before.
+
+```{r}
+n=1e3
+p_grid_ex<-seq(from=0,to=1,length.out = n)
+prior_ex<-rep(1,n)
+lkh_ex<-dbinom(8,size=15,prob = p_grid_ex)
+posterior_ex<-lkh_ex*prior_ex
+#we normalize
+posterior_ex<-posterior_ex/sum(posterior_ex)
+```
+
+### 3M2. Draw 10,000 samples from the grid approximation from above. Then use the samples to calculate the 90% HPDI for p.
+
+```{r}
+set.seed(100)
+n_draws_ex<-1e5
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+PI(samples_ex,prob=0.9)
+HPDI(samples_ex,prob = 0.9)
+median(samples_ex)
+dens(samples_ex,col="blue")
+abline(v=0.331,col="red")
+abline(v=0.716,col="red")
+```
+
+### 3M3. Construct a posterior predictive check for this model and data. This means simulate the distribution of samples, averaging over the posterior uncertainty in p. What is the probability of observing 8 water in 15 tosses?
+
+```{r}
+
+# dbinom(8,size=15,prob=0.53)
+
+dummy_ex <- rbinom( 1e5 , size=15 , prob=samples_ex ) 
+table(dummy_ex)/1e5
+# dummy_ex
+simplehist( dummy_ex , xlab="dummy water count" )
+```
+
+There is 14.7% of seeing 8 waters in 15 tosses.
+8 waters lie in the middle of the simulated distribution as the most common value.
+
+
+### 3M4. Using the posterior distribution constructed from the new (8/15) data, now calculate the probability of observing 6 water in 9 tosses.
+
+```{r}
+dbinom(6,size=9,prob=0.53)
+
+dummy_ex <- rbinom( 1e5 , size=9 , prob=samples_ex ) 
+table(dummy_ex)/1e5
+simplehist( dummy_ex , xlab="dummy water count" )
+```
+
+The probability of seeing 6 waters in 9 tosses is 17.5%. And 6 is not centered, which is not the right model for 6 out 9.
+
+### 3M5. Start over at 3M1, but now use a prior that is zero below p = 0.5 and a constant above p = 0.5. This corresponds to prior information that a majority of the Earth’s surface is water. Repeat each problem above and compare the inferences. What difference does the better prior make? If it helps, compare inferences (using both priors) to the true value p = 0.7.
+
+
+```{r}
+n=1e3
+p_grid_ex<-seq(from=0,to=1,length.out = n)
+prior_ex<-ifelse(p_grid_ex<0.5,0,1)
+plot(prior_ex)
+lkh_ex<-dbinom(8,size=15,prob = p_grid_ex)
+posterior_ex<-lkh_ex*prior_ex
+#we normalize
+posterior_ex<-posterior_ex/sum(posterior_ex)
+```
+
+#### 3M5B Draw 10,000 samples from the grid approximation from above. Then use the samples to calculate the 90% HPDI for p.
+
+```{r}
+
+set.seed(100)
+n_draws_ex<-1e5
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+PI(samples_ex,prob=0.9)
+HPDI(samples_ex,prob = 0.9)
+median(samples_ex)
+dens(samples_ex,col="blue")
+abline(v=0.500,col="red")
+abline(v=0.7117,col="red")
+abline(v=0.5945,col="green")
+```
+
+#### 3M5C Construct a posterior predictive check for this model and data. This means simulate the distribution of samples, averaging over the posterior uncertainty in p. What is the probability of observing 8 water in 15 tosses?
+
+```{r}
+
+dbinom(8,size=15,prob=0.7)
+
+dummy_ex <- rbinom( 1e5 , size=15 , prob=samples_ex ) 
+table(dummy_ex)/1e5
+# dummy_ex
+simplehist( dummy_ex , xlab="dummy water count 8/15" )
+```
+
+The probability of seeing 8 in 15 is 14.7% for old prior
+The probability of seeing 8 in 15 is 16% for new prior
+8% (true P)
+
+#### 3M5D Now calculate the probability of observing 6 water in 9 tosses.
+
+```{r}
+dbinom(6,size=9,prob=0.7)
+
+dummy_ex <- rbinom( 1e5 , size=9 , prob=samples_ex ) 
+table(dummy_ex)/1e5
+simplehist( dummy_ex , xlab="dummy water count 6/9" )
+```
+
+17% for uniform prior
+23% for new prior
+27% (true P)
+
+
+### 3M6. Suppose you want to estimate the Earth’s proportion of water very precisely. Specifically, you want the 99% percentile interval of the posterior distribution of p to be only 0.05 wide. This means the distance between the upper and lower bound ofthe interval should be 0.05. Howmany times will you have to toss the globe to do this?
+
+```{r}
+set.seed(100)
+n_draws_ex<-1e4
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+HPDI(samples_ex,prob = 0.99)
+median(samples_ex)
+dens(samples_ex,col="blue")
+
+n_draws_ex<-1e5
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+HPDI(samples_ex,prob = 0.99)
+median(samples_ex)
+dens(samples_ex,col="blue")
+
+n_draws_ex<-1e6
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+HPDI(samples_ex,prob = 0.99)
+median(samples_ex)
+dens(samples_ex,col="blue")
+
+n_draws_ex<-1e7
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+HPDI(samples_ex,prob = 0.99)
+median(samples_ex)
+dens(samples_ex,col="blue")
+
+n_draws_ex<-1e8
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+HPDI(samples_ex,prob = 0.99)
+median(samples_ex)
+dens(samples_ex,col="blue")
+
+n_draws_ex<-1e9
+samples_ex<-sample(p_grid_ex,prob=posterior_ex,size=n_draws_ex,replace=T)
+HPDI(samples_ex,prob = 0.99)
+median(samples_ex)
+dens(samples_ex,col="blue")
+```
+
+Not solved yet...
+
+
+## Hard
+
+
+```{r}
+data(homeworkch3)
+
+sum (birth1)+sum(birth2)
+```
+
+111 out of 200 births.
+
+### 3H1. Using grid approximation, compute the posterior distribution for the probability of a birth being a boy. Assume a uniform prior probability. Which parameter value maximizes the posterior probability?
+
+```{r}
+# grid from zero to 1
+p_grid<-seq(from=0, to=1, length.out = 1000)
+
+# uniform prior
+prob_p=rep(1,1000)
+
+# 111 boys from 200 births
+prob_data<-dbinom(111,size = 200,prob=p_grid)
+
+unstd_posterior<-prob_data*prob_p
+#standarized
+posterior<-unstd_posterior/sum(unstd_posterior)
+plot(x=p_grid,y=posterior,type="b")
+posterior[which.max(posterior)]
+which.max(posterior)
+```
+
+5.55 is the parameter value where the posterior is maximized
+
+
+### 3H2. Using the sample function, draw 10,000 random parameter values from the posterior distri- bution you calculated above. Use these samples to estimate the 50%, 89%, and 97% highest posterior density intervals.
+
+```{r}
+n_draws<-1e7
+samples<-sample(p_grid, prob=posterior, size = n_draws, replace = T)
+par(mfrow=c(1,2))
+plot(samples,col="blue")
+dens(samples,col="blue")
+
+median(samples)
+
+HPDI(samples,prob = 0.50)
+HPDI(samples,prob = 0.89)
+HPDI(samples,prob = 0.97)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

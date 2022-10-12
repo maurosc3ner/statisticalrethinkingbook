@@ -1,0 +1,583 @@
+---
+title: "Ch7 - Exercises"
+author: "Esteban Correa"
+date: "01/26/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+```
+
+
+# Exercises
+
+## Easy
+
+### 7E1. 
+
+State the three motivating criteria that define information entropy. Try to express each in your own words.
+
+1. information uncertainty should be continuos (a subtle rate of change should not be equal to a massive change in uncertainty).
+2. Uncertainty should increase with the increase in number of possible outcomes.
+3. Uncertainty should be additive, possible combinations should be the sum of separate uncertainties.
+
+### 7E2
+
+Suppose a coin is weighted such that, when it is tossed and lands on a table, it comes up heads 70% of the time. What is the entropy of this coin?
+
+```{r}
+#70% lands on heads, 30$ tails
+p <- c( 0.7, 0.3 ) 
+-sum( p*log(p) )
+```
+
+The entropy is 0.61.
+
+### 7E3
+
+Suppose a four-sided die is loaded such that, when tossed onto a table, it shows “1” 20%, “2” 25%, ”3” 25%, and ”4” 30% of the time. What is the entropy of this die?
+
+```{r}
+p <- c( 0.2, 0.25,0.25,.3 ) 
+-sum( p*log(p) )
+```
+ 
+Higher entropy because higher number of possible events.
+
+### 7E4.
+
+Suppose another four-sided die is loaded such that it never shows “4”. The other three sides show equally often. What is the entropy of this die? Medium.
+
+```{r}
+p <- c( 0.33, 0.33,0.33,.01 ) 
+-sum( p*log(p) )
+```
+
+Entropy reduces to 1.14 because low probability of four-sided.
+
+## Medium.
+
+### 7M1. 
+
+Write down and compare the definitions of AIC and WAIC. Which of these criteria is most general? Which assumptions are required to transform the more general criterion into a less general one?
+
+Both AIC and WAIC are part of information criteria methods.
+AIC refers to the Akaike Information Criterion. It is a method to estimate the out-sample accuracy of models
+
+WAIC refers to Widely Applicable Information Criterion. Comparing AIC and WAIC, the second makes no assumptions about the distribution of the posterior, whereas AIC assumes a multivariate gaussian. Three things are required to make a less general approach:
+
+1. Assume flat priors (they perform usually worst than informative ones).
+2. Assumes a multivariate gaussian distribution for the posterior
+3. The sample size N >> than the number of parameters
+
+
+
+### 7M2. 
+
+Explain the difference between model selection and model comparison. What information is lost under model selection?
+
+Model selection only focuses on the selection of models based on the lowest criterion selected (CV, AIC, DIC, or WAIC). On the other side, model comparison makes use of additional information such as error, std error, weight, DAG, in order to deliberate which model is better? how far is it against others? etc.
+
+### 7M3. 
+
+When comparing models with an information criterion, why must all models be fit to exactly the same observations? What would happen to the information criterion values, if the models were fit to different numbers of observations? Perform some experiments, if you are not sure.
+
+Information criteria not only predicts predictive accuracy (out of sample) of models. They also helps to uncover outliers, those observation that might skew the influence of the model/parameter. Therefore, if you change the initial dataset by partitioning and shuffling, a fold with a extreme observation that change the model and therefore the information criterion values. We can test this by removing Idaho from model in chapter 5.
+
+```{r}
+set.seed(24071847)
+data("WaffleDivorce")
+
+d<-WaffleDivorce
+d$MA<-standardize(d$MedianAgeMarriage)
+d$D<-standardize(d$Divorce)
+d$MR<-standardize(d$Marriage)
+
+#D~marriageAge+marriage rate
+m5.3_a<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d %>% filter(Loc!="ID"))
+precis(m5.3_a)
+
+m5.3_b<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+precis(m5.3_b)
+ 
+compare( m5.3_a , m5.3_b , func=PSIS )
+compare( m5.3_a , m5.3_b   )
+```
+
+Did you see how model without Idaho observation performs better than the full model (113.6 vs. 128.9).
+
+### 7M4. 
+
+What happens to the effective number of parameters, as measured by PSIS or WAIC, as a prior becomes more concentrated? Why? Perform some experiments, if you are not sure.
+
+```{r}
+# Full model flat priors and flat posterior
+m5.3_a<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,1),
+  bmr~dnorm(0,1),
+  bma~dnorm(0,1),
+  sigma~dexp(1)
+),data=d)
+# precis(m5.3_a)
+
+#removing outlier
+m5.3_b<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d %>% filter(Loc!="ID"))
+# precis(m5.3_b)
+
+m5.3t<-quap(flist=alist(
+  D~dstudent(10,mu,sigma), # t distribution uses an additional v parameter to control for thickness
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+# precis(m5.3t)
+
+compare( m5.3_a , m5.3_b ,m5.3t  )
+```
+
+We should expect at least 4 parameters (alpha, bmr, bma and sigma). Because we have Idaho observation, pWAIC increases to ~6 (m5.3_a).
+
+Strategy 1: Removes outlier to shrink effective number of parameters to 5 (m5.3_b)
+Strategy 2: Make use of thicker posterior (skeptical about outliers) and informative priors to get similar pWAIC~5.1
+
+### 7M5. 
+
+Provide an informal explanation of why informative priors reduce overfitting.
+
+By using informative priors, models tend to be skeptical about extreme values reducing fit accuracy (in-sample) but improving predictive accuracy (out of sample). When you reduce fit accuracy you are reducing overfitting.
+
+### 7M6. 
+
+Provide an informal explanation of why overly informative priors result in underfitting.
+
+As explained above, the skepticism of informative priors reduces the power of extreme values (outliers) to the model fit, but also reduce any influence of all points, creating an underfit situation.
+
+## Hard
+
+### 7H1. 
+
+In 2007, The Wall Street Journal published an editorial (“We’reNum- ber One, Alas”) with a graph of corporate tax rates in 29 countries plotted against tax revenue. A badly fit curve was drawn in (reconstructed at right), seemingly by hand, to make the argument that the relationship between tax rate and tax revenue increases and then declines, such that higher tax rates can actually produce less tax revenue. I want you to actually fit a curve to these data, found in data(Laffer). Consider models that use tax rate to predict tax revenue. Compare, using WAIC or PSIS, a straight line model to any curved models you like. What do you conclude about the relationship between tax rate and tax revenue?
+
+```{r}
+data(Laffer)
+d<-Laffer
+plot(tax_revenue~tax_rate,d)
+
+d$trate.s<-(d$tax_rate-mean(d$tax_rate))/sd(d$tax_rate)
+d$trate.s2<-d$trate.s^2
+d$trate.s3<-d$trate.s^3
+mean(d$tax_revenue)
+# lineal
+m7h1a<-quap(flist = alist(
+  tax_revenue~dnorm(mu,sigma),
+  mu<-a+b1*trate.s,
+  a~dnorm(3,2),
+  b1~dlnorm(0,1),
+  sigma~dunif(0,50)
+),data = d)
+precis(m7h1a)
+
+trate.seq <- seq( from=round(min(d$trate.s),0) , to=round(max(d$trate.s),0), by=0.5 )
+mu_all <- link( m7h1a ,data = data.frame(trate.s=trate.seq,
+                                        trate.s2=trate.seq^2,
+                                        trate.s3=trate.seq^3))
+
+mu.mean<-apply(mu_all,MARGIN = 2,FUN = mean)
+mu.PI<-apply(mu_all,MARGIN = 2,FUN = PI,prob=0.97)
+
+# interval to test
+
+# and we plot again but adding this new interval
+# plot raw data
+plot( tax_revenue ~ trate.s , d , col=col.alpha(rangi2,0.5) ,xaxt="n")
+# converting back to natural scale
+at<-trate.seq
+labels<-at*sd(d$tax_rate)+mean(d$tax_rate)
+axis( side=1 , at=at , labels=round(labels,0) )
+# draw MAP line
+lines( trate.seq , mu.mean )
+# draw HPDI region for line
+shade( mu.PI , trate.seq )
+```
+
+
+```{r}
+m7h1b<-quap(flist = alist(
+  tax_revenue~dnorm(mu,sigma),
+  mu<-a+b1*trate.s+b2*trate.s2,
+  a~dnorm(3,2),
+  b1~dlnorm(0,1),
+  b2~dnorm(0,1),
+  sigma~dunif(0,50)
+),data = d)
+
+mu_all <- link( m7h1b ,data = data.frame(trate.s=trate.seq,
+                                        trate.s2=trate.seq^2,
+                                        trate.s3=trate.seq^3))
+mu.mean<-apply(mu_all,MARGIN = 2,FUN = mean)
+mu.PI<-apply(mu_all,MARGIN = 2,FUN = PI,prob=0.97)
+# interval to test
+# and we plot again but adding this new interval
+# plot raw data
+plot( tax_revenue ~ trate.s , d , col=col.alpha(rangi2,0.5) ,xaxt="n")
+# converting back to natural scale
+at<-trate.seq
+labels<-at*sd(d$tax_rate)+mean(d$tax_rate)
+axis( side=1 , at=at , labels=round(labels,0) )
+# draw MAP line
+lines( trate.seq , mu.mean )
+# draw HPDI region for line
+shade( mu.PI , trate.seq )
+```
+
+
+```{r}
+m7h1c<-quap(flist = alist(
+  tax_revenue~dnorm(mu,sigma),
+  mu<-a+b1*trate.s+b2*trate.s2+b3*trate.s3,
+  a~dnorm(3,2),
+  b1~dlnorm(0,1),
+  b2~dnorm(0,0.5),
+  b3~dnorm(0,0.5),
+  sigma~dunif(0,50)
+),data = d)
+
+mu_all <- link( m7h1c ,data = data.frame(trate.s=trate.seq,
+                                        trate.s2=trate.seq^2,
+                                        trate.s3=trate.seq^3))
+mu.mean<-apply(mu_all,MARGIN = 2,FUN = mean)
+mu.PI<-apply(mu_all,MARGIN = 2,FUN = PI,prob=0.97)
+# interval to test
+# and we plot again but adding this new interval
+# plot raw data
+plot( tax_revenue ~ trate.s , d , col=col.alpha(rangi2,0.5) ,xaxt="n")
+# converting back to natural scale
+at<-trate.seq
+labels<-at*sd(d$tax_rate)+mean(d$tax_rate)
+axis( side=1 , at=at , labels=round(labels,0) )
+# draw MAP line
+lines( trate.seq , mu.mean )
+# draw HPDI region for line
+shade( mu.PI , trate.seq )
+```
+
+
+```{r}
+compare(m7h1a,m7h1b,m7h1c)
+```
+
+Tax revenue is defined as the revenues collected from all forms of taxes by a government. By increasing tax rates, we can see an increase in money collected by government, however, it then settles and there is no more revenue increase in very high taxes rate. There is no much sense in keep increasing taxes. All models perform very similar but they first two have more effective parameters.
+
+### 7H2. 
+
+In the Laffer data, there is one country with a high tax revenue that is an outlier. Use PSIS and WAIC to measure the importance of this outlier in the models you fit in the previous problem. Then use robust regression with a Student’s t distribution to revisit the curve fitting problem. How much does a curved relationship depend upon the outlier point?
+
+
+```{r}
+PSIS_m7h1 <- PSIS(m7h1c,pointwise=TRUE) 
+WAIC_m7h1 <- WAIC(m7h1c,pointwise=TRUE) 
+
+plot( PSIS_m7h1$k , WAIC_m7h1$penalty , xlab="PSIS Pareto k" , ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+# I prefer ggplot version for this to tag values programatically
+
+df<-data.frame(psis=PSIS_m7h1$k,waic=WAIC_m7h1$penalty,loc=paste0(d$tax_revenue,"~",d$tax_rate))
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(psis>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Ordinal regression (gaussian distribution, psis>0.5)")
+```
+
+Let's make this robust using t distribution:
+
+```{r}
+m7h1t<-quap(flist=alist(
+  tax_revenue~dstudent(2,mu,sigma), # t distribution uses an additional v parameter to control for thickness
+  mu<-a+b1*trate.s+b2*trate.s2+b3*trate.s3,
+  a~dnorm(3,2),
+  b1~dlnorm(0,1),
+  b2~dnorm(0,0.5),
+  b3~dnorm(0,0.5),
+  sigma~dunif(0,50)
+),data=d)
+precis(m7h1t)
+# now warnings of outliers dissapeared
+PSIS( m7h1t, func=PSIS )
+
+mu_all <- link( m7h1t ,data = data.frame(trate.s=trate.seq,
+                                        trate.s2=trate.seq^2,
+                                        trate.s3=trate.seq^3))
+mu.mean<-apply(mu_all,MARGIN = 2,FUN = mean)
+mu.PI<-apply(mu_all,MARGIN = 2,FUN = PI,prob=0.97)
+# interval to test
+# and we plot again but adding this new interval
+# plot raw data
+plot( tax_revenue ~ trate.s , d , col=col.alpha(rangi2,0.5) ,xaxt="n")
+# converting back to natural scale
+at<-trate.seq
+labels<-at*sd(d$tax_rate)+mean(d$tax_rate)
+axis( side=1 , at=at , labels=round(labels,0) )
+# draw MAP line
+lines( trate.seq , mu.mean )
+# draw HPDI region for line
+shade( mu.PI , trate.seq )
+```
+
+
+```{r}
+PSIS_m7h1t <- PSIS(m7h1t,pointwise=TRUE) 
+WAIC_m7h1t <- WAIC(m7h1t,pointwise=TRUE) 
+
+plot( PSIS_m7h1t$k , WAIC_m7h1t$penalty , xlab="PSIS Pareto k" , ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+# I prefer ggplot version for this to tag values programatically
+
+df<-data.frame(psis=PSIS_m7h1t$k,waic=WAIC_m7h1t$penalty,loc=paste0(d$tax_revenue,"~",d$tax_rate))
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(psis>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Robust regression (t-distribution, psis>0.5)")
+compare(m7h1a,m7h1b,m7h1c,m7h1t)
+```
+
+By using a student-t distribution rather than outlier elimination, we have improved the model (lowest WAIC value).
+
+### 7H3.
+
+Consider three fictional Polynesian islands. On each there is a Royal Ornithologist charged by the king with surveying the bird population. They have each found the following proportions of 5 important bird species (See Table). Notice that each row sums to 1, all the birds. This problem has two parts. It is not computationally complicated. But it is conceptually tricky. First, compute the entropy of each island’s bird distribution. Interpret these entropy values. Second, use each island’s bird distribution to predict the other two. This means to compute the K-L Divergence of each island from the others, treating each island as if it were a statistical model of the other islands. You should end up with 6 different K-L Divergence values. Which island predicts the others best? Why?
+
+```{r}
+il1<-c(0.2,0.2,0.2,0.2,0.2)
+-sum(il1*log(il1))
+
+il2<-c(0.8,0.1,0.05,0.025,0.025)
+-sum(il2*log(il2))
+
+il3<-c(0.05,0.15,0.7,0.05,0.05)
+-sum(il3*log(il3))
+
+```
+
+Predicting others from island 1:
+
+```{r}
+# if we observe during several years this (q=p), divergence is almost zero
+# q<-c(0.99,0.01)
+q<-il1
+p<-il2
+# divergence
+sum(p*log(p/q))
+
+# if we observe during several years this (q=p), divergence is almost zero
+# q<-c(0.99,0.01)
+q<-il1
+p<-il3
+# divergence
+sum(p*log(p/q))
+```
+
+Predicting others from island 2:
+
+```{r}
+# if we observe during several years this (q=p), divergence is almost zero
+# q<-c(0.99,0.01)
+q<-il2
+p<-il1
+# divergence
+sum(p*log(p/q))
+
+# if we observe during several years this (q=p), divergence is almost zero
+# q<-c(0.99,0.01)
+q<-il2
+p<-il3
+# divergence
+sum(p*log(p/q))
+```
+
+Predicting others from island 3:
+
+```{r}
+# if we observe during several years this (q=p), divergence is almost zero
+# q<-c(0.99,0.01)
+q<-il3
+p<-il1
+# divergence
+sum(p*log(p/q))
+
+# if we observe during several years this (q=p), divergence is almost zero
+# q<-c(0.99,0.01)
+q<-il3
+p<-il2
+# divergence
+sum(p*log(p/q))
+```
+
+Island 1 predicts the other better because the overall  K-L divergence is lower for it.
+
+### 7H4. 
+
+Recall the marriage, age, and happiness collider bias example from Chapter 6. Run models m6.9 and m6.10 again. Compare these two models using WAIC (or LOO, they will produce identical results). Which model is expected to make better predictions? Which model provides the correct causal inference about the influence of age on happiness? Can you explain why the answers to these two questions disagree?
+
+```{r}
+d <- sim_happiness( seed=1977 , N_years=1000 ) 
+precis(d)
+d2 <- d[ d$age>17 , ] # only adults 
+d2$A <- ( d2$age - 18 ) / ( 65 - 18 ) # normalize (0 1)
+d2$mid<-d2$married+1
+
+m6.9 <- quap( alist(
+  happiness ~ dnorm( mu , sigma ), 
+  mu <- a[mid] + bA*A, 
+  a[mid] ~ dnorm( 0 , 1 ), 
+  bA ~ dnorm( 0 , 2 ), 
+  sigma ~ dexp(1)
+) , data=d2 )
+precis(m6.9,depth=2)
+
+m6.10 <- quap( alist(
+  happiness ~ dnorm( mu , sigma ), 
+  mu <- a+ bA*A, 
+  a ~ dnorm( 0 , 1 ), 
+  bA ~ dnorm( 0 , 2 ), 
+  sigma ~ dexp(1)
+) , data=d2 )
+precis(m6.10,depth=2)
+
+compare(m6.9,m6.10)
+#LOO
+compare(m6.9,m6.10,func = PSIS)
+```
+
+Model inducing an spurious association (isMarried and Age) makes the best predictions. Model with only age provides the correct causal inference even with lower predictive accuracy. We need to recall tha information criteria measures only focuses on predictive accuracy (out sample). Maximizing expected predicted accuracy is not the same as inferring causation.
+
+### 7H5.
+
+Revisit the urban fox data, data(foxes), from the previous chapter’s practice problems. Use WAIC or PSIS based model comparison on five different models, each using weight as the outcome, and containing these sets of predictor variables:
+
+1. avgfood + groupsize + area 
+2. avgfood + groupsize 
+3. groupsize + area
+4. avgfood
+5. area
+
+Can you explain the relative differences in WAIC scores, using the fox DAG from last week’s homework? Be sure to pay attention to the standard error of the score differences (dSE).
+
+```{r}
+data("foxes")
+d<-foxes
+
+d$W<-scale(d$weight)
+d$GS<-scale(d$groupsize)
+d$A<-scale(d$area)
+d$AF<-scale(d$avgfood)
+# 1. avgfood + groupsize + area 
+m5h1a<-quap(flist=alist(
+  weight~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+baf*AF+bgs*GS+ba*A,
+  a~dnorm(0,0.2),
+  baf~dnorm(0,0.5),
+  bgs~dnorm(0,0.5),
+  ba~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1a)
+# 2. avgfood + groupsize 
+m5h1b<-quap(flist=alist(
+  weight~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+baf*AF+bgs*GS,
+  a~dnorm(0,0.2),
+  baf~dnorm(0,0.5),
+  bgs~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1b)
+# 3. groupsize + area
+m5h1c<-quap(flist=alist(
+  weight~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+bgs*GS+ba*A,
+  a~dnorm(0,0.2),
+  bgs~dnorm(0,0.5),
+  ba~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1c)
+# 4. avgfood
+m5h1d<-quap(flist=alist(
+  weight~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+baf*AF,
+  a~dnorm(0,0.2),
+  baf~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1d)
+# 5. area
+m5h1e<-quap(flist=alist(
+  weight~dnorm(mu,sigma),#ba*MA+bm*MR+
+  mu<-a+ba*A,
+  a~dnorm(0,0.2),
+  ba~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5h1e)
+
+compare(m5h1a,m5h1b,m5h1c,m5h1d,m5h1e)
+```
+
+Comparing differences using pointwise WAIC and pointwise WAIC SE:
+
+```{r}
+# m5h1b vs m5h1a
+0.1+c(-1,1)*0.49*2.59
+
+# m5h1c vs m5h1a
+0.9+c(-1,1)*0.83*2.59
+
+# m5h1d vs m5h1a
+1.2+c(-1,1)*0.23*2.59
+
+# m5h1e vs m5h1a
+2.1+c(-1,1)*0.93*2.59
+```
+
+Causal model (m5h1d) is worst than the full confounded (m5h1a) after checking dWAIC differences. 
+

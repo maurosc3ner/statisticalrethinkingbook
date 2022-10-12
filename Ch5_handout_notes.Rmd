@@ -1,0 +1,735 @@
+---
+title: "Ch5"
+author: "Esteban Correa"
+date: "01/26/2022"
+output: html_document
+---
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+memory.limit(size=64000)
+gc()
+```
+
+
+# 5.1 Spurious association
+
+```{r}
+
+data("WaffleDivorce")
+
+d<-WaffleDivorce
+d$MA<-scale(d$MedianAgeMarriage)
+d$D<-scale(d$Divorce)
+d$MR<-scale(d$Marriage)
+sd(d$MedianAgeMarriage)
+```
+
+
+Suppose you have the following linear regression model for the Divorce~Median Age Marriage:
+
+$D_{i}\sim Normal(\mu,\sigma)$
+
+$\mu=\alpha+\beta M$
+
+$\alpha\sim Normal(0,0.2)$ it is 0.2, because it is standardized, intercept should be very close to zero.
+
+$\beta\sim Normal(0,0.5)$
+
+$\sigma\sim Exponential(1)$
+
+Build the model:
+
+```{r}
+m5.1<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bma*MA,
+  a~dnorm(0,0.2),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5.1)
+```
+
+Simulate the priors:
+
+```{r}
+set.seed(123)
+# extract samples from the posterior
+prior <- extract.prior( m5.1 )
+
+mu<-link(m5.1,post=prior,data=list(MA=c(-2,2)))
+
+# display raw data and sample size
+plot( NULL , xlim=c(-2,2) , 
+      ylim=c(-2,2),col=rangi2 , 
+       )
+# plot the lines, with transparency
+for ( i in 1:1e2 )
+  lines( c(-2,2),mu[i,],col=col.alpha("black",0.3) , add=TRUE )
+```
+
+
+
+```{r}
+MA.seq=seq(-3,3,length.out=50)
+
+#use link to compute mu for each sample from posterior and for each AGE in MA.seq
+mu <- link( m5.1 , data=data.frame(MA=MA.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+
+
+# plot it all 
+plot( D ~ MA , data=d , col=rangi2 ) 
+lines( MA.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , MA.seq )
+
+```
+
+
+
+Let's repeat the steps but using marriage rate:
+
+```{r}
+## model build
+
+m5.2<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR,
+  a~dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5.2)
+## prior simulation
+prior <- extract.prior( m5.2 )
+mu<-link(m5.2,post=prior,data=list(MR=c(-2,2)))
+
+# display raw data and sample size
+plot( NULL , xlim=c(-2,2) , 
+      ylim=c(-2,2),col=rangi2 , 
+       )
+# plot the lines, with transparency
+for ( i in 1:1e2 )
+  lines( c(-2,2),mu[i,],col=col.alpha("black",0.3) , add=TRUE )
+
+## Posterior
+MR.seq=seq(-3,3,length.out=50)
+
+#use link to compute mu for each sample from posterior and for each AGE in MA.seq
+mu <- link( m5.2 , data=data.frame(MR=MR.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+
+
+# plot it all 
+plot( D ~ MR , data=d , col=rangi2 ) 
+lines( MR.seq , mu.mean , lwd=2 ) 
+shade( mu.PI , MR.seq )
+
+```
+
+
+```{r}
+dag5.1<-dagitty("dag{
+                A->M
+                M->D
+                A->D
+}")
+drawdag(dag5.1)
+impliedConditionalIndependencies(dag5.1)
+
+dag5.1b<-dagitty("dag{
+                A->M
+                A->D
+}")
+drawdag(dag5.1b)
+
+impliedConditionalIndependencies(dag5.1b)
+
+```
+
+D is not associated with M after conditioning|controlling by A. D has a conditional independency.
+
+Let's create the multiple regression model
+
+```{r}
+m5.3<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+
+precis(m5.3)
+
+plot(coeftab(m5.1,m5.2,m5.3),par=c("bma","bmr"))
+```
+
+bma only increases its uncertainty after moving to a multiple regression. bmr is associated with divorce when bma is removed.
+
+**Once we know median age at marriage for a State, there is little or no additional predictive power in also knowing the rate of marriage in that State.** D has conditional independency.
+
+## Plotting multivariate regression
+
+There are three types of plots:
+Residual plots: They compare the outcome against the residual of the predictor, useful to untangle relationships and understand the model.
+posterior plots: They focus on comparing model-based predictions against observed data
+Counterfactual plots: Explore prediction using imaginary experiments|scenarios.
+
+### Residual plots
+
+Let's understand why marriage rate does not add predictive power to predicting divorce rate.
+
+```{r}
+par(mfrow=c(1,2))
+m5.4<-quap(flist = alist(
+  MR~dnorm(mu,sigma),
+  mu<-a+bma*MA,
+  a~dnorm(0,0.2),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+
+# precis(m5.4)
+
+# get the posterior
+MA.seq<-seq(from=-2,to=2,length.out=50)
+mu.mr<-link(m5.4,data=data.frame(MA=MA.seq))
+mu.mr.all<-apply(mu.mr,2,mean)
+d$mr.resid<-d$MR-mu.mr.all
+
+# states over the regression line have excess of marriage rate and viceversa
+plot(MR~MA,d,col=rangi2,xlim=c(-2,2),
+     xlab="Age (Std)",
+     ylab="Marrige rate (Std)")
+lines( MA.seq , mu.mr.all , lwd=2 ) 
+
+m5.4b<-quap(flist = alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr.res*mr.resid,
+  a~dnorm(0,0.2),
+  bmr.res~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+# precis(m5.4b)
+
+# get the posterior for the regresion line of the residuals
+mr.resid.seq<-seq(from=-2,to=2,length.out=50)
+mu.mr.resid<-link(m5.4b,data=data.frame(mr.resid=mr.resid.seq))
+mu.mr.resid.all<-apply(mu.mr.resid,2,mean)
+mu.mr.resid.PI <- apply( mu.mr.resid , 2 , PI , prob=0.89 )
+
+# it is even for negative and positive residuals. 
+plot(D~mr.resid,d,col=rangi2,xlim=c(-2,2),
+     xlab="Marriage rate (Std)",
+     ylab="Divorce rate (Std)")
+lines( mr.resid.seq , mu.mr.resid.all , lwd=2 ) 
+shade(mu.mr.resid.PI,mr.resid.seq)
+abline(v=0,lty=2)
+
+```
+
+Now, let's repeat the exercise of residuals for median age at marriage:
+
+```{r}
+par(mfrow=c(1,2))
+m5.5<-quap(flist = alist(
+  MA~dnorm(mu,sigma),
+  mu<-a+bmr*MR,
+  a~dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+
+precis(m5.5)
+
+# get the posterior
+MR.seq<-seq(from=-2,to=2,length.out=50)
+mu.ma<-link(m5.5,data=data.frame(MR=MR.seq))
+mu.ma.all<-apply(mu.ma,2,mean)
+d$ma.resid<-d$MA-mu.ma.all
+
+# states over the regression line have excess of marriage rate and viceversa
+plot(MA~MR,d,col=rangi2,xlim=c(-2,2),
+     ylab="Age (Std)",
+     xlab="Marrige rate (Std)")
+lines( MR.seq , mu.ma.all , lwd=2 ) 
+
+# we regress on the outcome
+m5.5b<-quap(flist = alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bma.res*ma.resid,
+  a~dnorm(0,0.2),
+  bma.res~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+# precis(m5.4b)
+
+# get the posterior for the regression line of the residuals
+ma.resid.seq<-seq(from=-2,to=2,length.out=50)
+mu.ma.resid<-link(m5.5b,data=data.frame(ma.resid=ma.resid.seq))
+mu.ma.resid.all<-apply(mu.ma.resid,2,mean)
+mu.ma.resid.PI <- apply( mu.ma.resid , 2 , PI , prob=0.89 )
+
+plot(D~ma.resid,d,col=rangi2,xlim=c(-2,2),
+     xlab="Age Residuals (Std)",
+     ylab="Divorce rate (Std)")
+lines( ma.resid.seq , mu.ma.resid.all , lwd=2 ) 
+shade(mu.ma.resid.PI,ma.resid.seq)
+abline(v=0,lty=2)
+
+```
+
+States where people married older than state average, tend to have less divorce.
+
+
+
+### Posterior prediction plots
+
+They allow us to see how implied predictions compared to raw data and check outliers 
+
+```{r}
+
+mu.sim<-link(m5.3)
+
+mu.sim.mean<-apply(mu.sim,2,mean)
+mu.sim.PI<-apply(mu.sim,2,PI,prob=.89)
+
+
+D_sim<-sim(m5.3,n = 1e4)
+D_PI<-apply(D_sim, 2, PI)
+#predicted vs observed
+plot(mu.sim.mean~d$D,col=rangi2,ylim=range(mu.sim.PI))
+abline(a=0,b=1,lty=2)
+
+for(i in 1:nrow(d))
+  lines(rep(d$D[i],2),mu.sim.PI[,i],col=rangi2)
+
+identify( x=d$D , y=mu.sim.mean , labels=d$Loc )
+```
+
+
+### Counterfactual plots
+
+```{r}
+m5.3.A<-quap(flist=alist(
+  # A -> D <- M
+  D~dnorm(mu_D,sigma_D),
+  mu_D<-a+bma*MA+bmr*MR,
+  a~dnorm(0,0.2),
+  bma~dnorm(0,0.5),
+  bmr~dnorm(0,0.5),
+  sigma_D~dexp(1),
+  # A -> M
+  MR~dnorm(mu_M,sigma_M),
+  mu_M<-aM+bm_ma*MA,
+  aM~dnorm(0,0.2),
+  bm_ma~dnorm(0,0.5),
+  sigma_M~dexp(1)
+),data=d)
+
+# precis(m5.3.A)
+
+
+MA.seq<-seq(-2,2,length.out=50)
+## manual mode
+post<-extract.samples(m5.3.A)
+# we first simulate equation for marriage rate
+MR_sim<-with(post,sapply(1:length(MA.seq),
+  function(i){
+    rnorm(1e3,mean = aM+bm_ma*MA.seq[i],sd=sigma_M)
+  }
+))
+
+MR_sim.mean<-apply(MR_sim,2,mean)
+MR_sim.PI<-apply(MR_sim,2,PI)
+
+MR.seq<-seq(-2,2,length.out=50)
+# Then, we  simulate equation for divorce
+D_sim<-with(post,sapply(1:length(MR.seq),
+  function(i){
+    rnorm(1e3,mean = a+bma*MA.seq[i]+bmr*MR.seq[i],sd=sigma_D)
+  }
+))
+
+D_sim.mean<-apply(D_sim,2,mean)
+D_sim.PI<-apply(D_sim,2,PI)
+par(mfrow=c(1,2))
+plot(NULL,xlim=range(MA.seq) ,ylim=range(D_sim.PI),
+     xlab="Manipulated Age",ylab="Counterfactual D",main="Total effect A->D")
+lines(D_sim.mean~MA.seq)
+shade(D_sim.PI,MA.seq)
+
+
+plot(NULL,xlim=range(MA.seq) ,ylim=range(MR_sim.PI),
+     xlab="Manipulated Age",ylab="Counterfactual M",main="Effect A->M")
+lines(MR_sim.mean~MA.seq)
+shade(MR_sim.PI,MA.seq)
+```
+
+Let's check the effect of manipulating M when A = 0.
+
+```{r}
+dag5.3M<-dagitty("dag{
+                M->D
+                A->D
+}")
+
+drawdag(dag5.3M)
+```
+
+
+
+```{r}
+MR.seq<-seq(-2,2,length.out=50)
+# Then, we  simulate equation for divorce
+D_sim<-with(post,sapply(1:length(MR.seq),
+  function(i){
+    rnorm(1e3,mean = a+bma*0+bmr*MR.seq[i],sd=sigma_D)
+  }
+))
+
+D_sim.mean<-apply(D_sim,2,mean)
+D_sim.PI<-apply(D_sim,2,PI)
+par(mfrow=c(1,2))
+plot(NULL,xlim=range(MR.seq) ,ylim=range(D_sim.PI),
+     xlab="Manipulated marriage rate",ylab="Counterfactual D",main="Total effect M->D")
+lines(D_sim.mean~MR.seq)
+shade(D_sim.PI,MR.seq)
+
+
+# simple mode using sim command
+sim_dat <- data.frame( MR=seq(from=-2,to=2,length.out=30) , MA=0 ) 
+s <- sim( m5.3.A , data=sim_dat , 
+          vars="D"  #list of variables 
+          )
+plot( sim_dat$MR , colMeans(s) , ylim=c(-2,2) , type="l" , xlab="manipulated M" , ylab="counterfactual D" )
+shade( apply(s,2,PI) , sim_dat$MR ) 
+mtext( "Total counterfactual effect of M on D" )
+
+```
+
+
+We can conclude that D does not change when we manipulate M. D remains almost constant exhibiting no evidence for a strong association of MR on D.
+
+
+# 5.2 Masked relationships
+
+
+```{r}
+set.seed(123)
+data("milk")
+d<-milk
+
+d$K<-scale(d$kcal.per.g)
+d$N<-scale(d$neocortex.perc)
+d$M<-scale(log(d$mass))
+```
+
+
+$K_{i}\sim Normal(\mu,\alpha)$
+
+$\mu_{i}=\alpha+\beta_{N} N_{i}$
+
+Let's code the model above:
+
+```{r}
+d2<-d %>% 
+  drop_na()
+m5.6<-quap(flist=alist(
+  K~dnorm(mu,sigma),
+  mu<-a+bN*N,
+  a~dnorm(0,1),
+  bN~dnorm(0,1),
+  sigma~dexp(1)
+),data=d2)
+precis(m5.6)
+```
+
+
+Let's check the prior to see if the outcome is within the logical limits:
+
+```{r}
+prior<-extract.prior(m5.6)
+N.seq<-c(-2,2) 
+mu.all<-link(m5.6,
+             post=prior,#compute the posterior mu using the simulated 1 thousand priors
+             data=list(N=N.seq)
+             )
+plot(NULL,xlim=N.seq,ylim=c(-3,3))
+
+for (i in 1:100)
+  lines(N.seq,mu.all[i,],col=col.alpha("black",0.3))
+```
+
+You can observe how N values within +/-2 std yield weird outcomes outside of +/-2 std. Also, when predictor is zero, the outcome also should be zero. Let's tighten the priors a little bit.
+
+
+
+```{r}
+m5.6b<-quap(flist=alist(
+  K~dnorm(mu,sigma),
+  mu<-a+bN*N,
+  a~dnorm(0,.2),
+  bN~dnorm(0,.5),
+  sigma~dexp(1)
+),data=d2)
+precis(m5.6b)
+
+prior<-extract.prior(m5.6b)
+N.seq<-c(-2,2) 
+mu.all<-link(m5.6b,
+             post=prior,#compute the posterior mu using the simulated 1 thousand priors
+             data=list(N=N.seq)
+             )
+plot(NULL,xlim=N.seq,ylim=c(-3,3))
+
+for (i in 1:100)
+  lines(N.seq,mu.all[i,],col=col.alpha("black",0.3))
+```
+
+The idea of checking/correcting priors is to get mu within the boundaries for the outcome and around zero.
+
+```{r}
+N.seq<-seq(from=-2.5,to=2.5,length.out=30)
+mu.all<-link(m5.6b,
+             data=list(N=N.seq)
+             )
+mu.mean<-apply(mu.all,2,mean)
+mu.PI<-apply(mu.all,2,PI)
+plot(K~N,data=d2,col=rangi2)
+lines(N.seq,mu.mean)
+shade(mu.PI,N.seq)
+
+
+```
+
+Neo-cortex percentage of mass does not exhibit a strong relationship with kilocalories of milk. Repeat the process for the mass of the female:
+
+```{r}
+m5.7<-quap(flist=alist(
+  K~dnorm(mu,sigma),
+  mu<-a+bM*M,
+  a~dnorm(0,.2),
+  bM~dnorm(0,.5),
+  sigma~dexp(1)
+),data=d2)
+precis(m5.7)
+
+prior<-extract.prior(m5.7)
+M.seq<-c(-2,2) 
+mu.all<-link(m5.7,
+             post=prior,#compute the posterior mu using the simulated 1 thousand priors
+             data=list(M=M.seq)
+             )
+plot(NULL,xlim=M.seq,ylim=c(-3,3))
+
+for (i in 1:100)
+  lines(M.seq,mu.all[i,],col=col.alpha("black",0.3))
+
+M.seq<-seq(from=-2.5,to=2.5,length.out=30)
+mu.all<-link(m5.7,
+             data=list(M=M.seq)
+             )
+mu.mean<-apply(mu.all,2,mean)
+mu.PI<-apply(mu.all,2,PI)
+plot(K~M,data=d2,col=rangi2)
+lines(M.seq,mu.mean)
+shade(mu.PI,M.seq)
+```
+
+Conversely, the larger the mass of the female mother, the less efficient is her milk in terms of kilocalories.
+
+```{r}
+m5.8<-quap(flist=alist(
+  K~dnorm(mu,sigma),
+  mu<-a+bM*M+bN*N,
+  a~dnorm(0,.2),
+  bM~dnorm(0,.5),
+  bN~dnorm(0,.5),
+  sigma~dexp(1)
+),data=d2)
+precis(m5.8)
+plot( coeftab( m5.6b , m5.7 , m5.8 ) , pars=c("bM","bN") )
+pairs(~K+M+N,data=d2)
+par(mfrow=c(1,2))
+M.seq<-seq(from=-2.5,to=2.5,length.out=30)
+mu.all<-link(m5.8,
+             data=list(M=M.seq,N=0)
+             )
+mu.mean<-apply(mu.all,2,mean)
+mu.PI<-apply(mu.all,2,PI)
+plot(NULL,data=d2,col=rangi2,xlim=range(d2$N),ylim=range(d2$K))
+mtext("Counterfactual of Mass, holding N=0")
+lines(M.seq,mu.mean)
+shade(mu.PI,M.seq)
+
+N.seq<-seq(from=-2.5,to=2.5,length.out=30)
+mu.all<-link(m5.8,
+             data=list(N=N.seq,M=0)
+             )
+mu.mean<-apply(mu.all,2,mean)
+mu.PI<-apply(mu.all,2,PI)
+plot(NULL,data=d2,col=rangi2,xlim=range(d2$M),ylim=range(d2$K))
+mtext("Counterfactual of Neocortex, holding M=0")
+lines(N.seq,mu.mean)
+shade(mu.PI,N.seq)
+```
+
+Can you see how when neo-cortex and mass are both together in the model. According to the forest plot, their effects are larger than before. According to the counterfactual plot, they cancel out together, and they alone are negatively and positively associated with the outcome, M and N are positively correlated, the larger M the bigger N. There is a masked relationship here with three probable causal graps:
+
+
+```{r}
+par(mfrow=c(1,3))
+dagA<-dagitty("dag{
+                M->N
+                N->K
+                M->K
+}")
+coordinates(dagA) <- list( x=c(M=0,K=1,N=2) , y=c(M=0.5,K=1,N=0.5) )
+drawdag(dagA)
+
+
+dagB<-dagitty("dag{
+                N->M
+                N->K
+                M->K
+}")
+coordinates(dagB) <- list( x=c(M=0,K=1,N=2) , y=c(M=0.5,K=1,N=0.5) )
+drawdag(dagB)
+
+dagC<-dagitty("dag{
+                U->M
+                U->N
+                N->K
+                M->K
+}")
+coordinates(dagC) <- list( x=c(M=0,U=1,K=1,N=2) , y=c(M=0.5,U=0.5,K=1,N=0.5) )
+drawdag(dagC)
+
+# you can obtain all possible DAGs "Markov equivalencies"
+equivalentDAGs(dagA)
+```
+
+# 5.3 Categorical variables
+
+Consider the model for height but using sex:
+
+$H_{i}\sim Normal(\mu,\sigma)$
+
+$\mu_{i}=\alpha+\beta_{sex} Sex_{i}$
+
+$\alpha_{i}\sim Normal(175,20)$
+
+$\beta_{i}\sim Normal(0,10)$
+
+$\sigma_{i}\sim Uniform(0,50)$
+
+The dummy variable approach:
+
+```{r}
+data("Howell1")
+d<-Howell1
+
+# By assuming this model, we are adding more uncertainty to male, because it depends from two parameters, alpha an beta
+
+mu_female<-rnorm(1e3,175,20)
+mu_male<-rnorm(1e3,175,20)+rnorm(1e3,0,10)
+
+precis(data.frame(mu_female,mu_male))
+
+```
+
+
+We can do this better by using an index variable:
+
+$H_{i}\sim Normal(\mu,\sigma)$
+
+$\mu_{i}=\alpha_{sex}[i]$
+
+$\alpha_{j}\sim Normal(175,20),\ for\ j=1..2$
+
+$\sigma_{i}\sim Uniform(0,50)$
+
+```{r}
+
+# 1 for female and 2 for male
+d$sex<-ifelse(d$male==1,2,1)
+
+m5.9<-quap(flist=alist(
+  height~dnorm(mu,sigma),
+  mu<-alpha[sex],
+  alpha[sex]~dnorm(175,20),
+  sigma~dunif(0,50)
+  
+),data=d)
+precis(m5.9,depth = 2)
+
+post <- extract.samples(m5.9) 
+# expected difference between female and male, also called contrast
+post$diff_fm <- post$alpha[,1] - post$alpha[,2] 
+precis( post , depth=2 )
+
+```
+
+
+The expected difference or contrast between females and males are about 7 cms.
+
+Let's do it for many categories
+
+```{r}
+d<-milk
+summary(d)
+d$clade_id<-as.integer(d$clade)
+d$K<-scale(d$kcal.per.g)
+
+m5.10<-quap(flist=alist(
+  K~dnorm(mu,sigma),
+  mu<-a[clade_id],
+  a[clade_id]~dnorm(0,.5),
+  sigma~dexp(1)
+),data=d)
+precis(m5.10,depth = 2)
+
+plot( precis( m5.10 , depth=2 , pars="a" ) , xlab="expected kcal (std)" )
+```
+
+For two categorical variables or more:
+
+```{r}
+d$house<-sample( rep(1:5,each=6) , size=nrow(d) )
+
+summary(d)
+d$clade_id<-as.integer(d$clade)
+d$K<-scale(d$kcal.per.g)
+
+m5.11<-quap(flist=alist(
+  K~dnorm(mu,sigma),
+  mu<-a[clade_id]+h[house],
+  a[clade_id]~dnorm(0,.5),
+  h[house]~dnorm(0,.5),
+  sigma~dexp(1)
+),data=d)
+precis(m5.11,depth = 2)
+
+plot( precis( m5.11 , depth=2 , pars="a" ) , xlab="expected kcal (std)" )
+plot( precis( m5.11 , depth=2 , pars="h" ) , xlab="expected kcal (std)" )
+```
+
+
+
+
+
+
+
+

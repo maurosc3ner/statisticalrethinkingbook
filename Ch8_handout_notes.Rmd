@@ -1,0 +1,431 @@
+---
+title: "Ch8"
+author: "Esteban Correa"
+date: "04/20/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(echo=T,warning = F,message = F)
+
+install.packages(c("coda","mvtnorm","dagitty","shape"))
+devtools::install_github("rmcelreath/rethinking")
+
+```
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+memory.limit(size=64000)
+gc()
+
+theme_set(theme_minimal())
+```
+
+# 8.1. Building an interaction
+
+## 8.1.1. Making a ruggedmodel.
+
+We can clearly see here, how three different scaling strategies were applied (magnitude [log], centering, and normalization). The choice between them depends of what the expert want to achieve or interpret. There are not good or bad choices:
+
+```{r}
+data(rugged) 
+d <- rugged
+
+par(mfrow=c(1,3))
+plot(rgdppc_2000~rugged,data=d)
+# because big gaps between GDP, you can make log version of outcome, there is not loss in information
+d$log_gdp <- log( d$rgdppc_2000 )
+plot(log_gdp~rugged,data=d)
+# extract countries with GDP data 
+
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+
+# rescale variables 
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp) 
+dd$rugged_norm <- dd$rugged / max(dd$rugged)
+
+plot(log_gdp_std~rugged_norm,data=dd)
+```
+
+Model with flat priors:
+
+$$\begin{aligned}
+logGDP\_std_i\sim Normal(\mu_i,\alpha)\\
+\mu_i=\alpha+\beta(rugged\_norm_i-\overline{rugged\_norm_i})\\
+\alpha\sim Norm(1,1)\\
+\beta\sim Norm(0,1)\\
+\sigma\sim Exponential(1)
+\end{aligned}
+$$
+
+```{r}
+set.seed(81)
+
+m8.1a <- quap( alist(
+  log_gdp_std ~ dnorm( mu , sigma ) ,
+  mu <- a + b*( rugged_norm - mean(dd$rugged_norm) ) , 
+  a ~ dnorm( 1 , 1 ), 
+  b ~ dnorm( 0 , 1 ), 
+  sigma ~ dexp( 1 )
+) , data=dd )
+
+#getting the right prior
+prior <- extract.prior( m8.1a )
+# set up the plot dimensions 
+plot( NULL , xlim=c(0,1) , ylim=c(0.5,1.5) , xlab="ruggedness" , ylab="log GDP" )
+abline( h=min(dd$log_gdp_std) , lty=2 ) 
+abline( h=max(dd$log_gdp_std) , lty=2 )
+# draw 50 lines from the prior 
+rugged_seq <- seq( from=-0.1 , to=1.1 , length.out=30 ) 
+mu <- link( m8.1a , post=prior , data=data.frame(rugged_norm=rugged_seq) ) 
+for ( i in 1:50 ) 
+  lines( rugged_seq , mu[i,] , col=col.alpha("black",0.3) )
+```
+
+There are lots of lines that expect average GDP outside observed ranges. we can tight our $\alpha$ and $\beta$:
+
+$$\begin{aligned}
+logGDP\_std_i\sim Normal(\mu_i,\alpha)\\
+\mu_i=\alpha+\beta*(rugged\_norm_i-\overline{rugged\_norm_i})\\
+\alpha\sim Norm(1,0.1)\\
+\beta\sim Norm(0,0.3)\\
+\sigma\sim Exponential(1)
+\end{aligned}
+$$
+
+
+```{r}
+# how many lines are within the min and max gdp 1.3 - 0.7 = 0.6
+sum( abs(prior$b) > 0.6 ) / length(prior$b)
+
+m8.1b <- quap( alist(
+  log_gdp_std ~ dnorm( mu , sigma ) ,
+  mu <- a + b*( rugged_norm - mean(dd$rugged_norm) ) , 
+  a ~ dnorm( 1 , 0.1 ), 
+  b ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( 1 )
+) , data=dd )
+
+#getting the right prior
+prior <- extract.prior( m8.1b )
+# set up the plot dimensions 
+plot( NULL , xlim=c(0,1) , ylim=c(0.5,1.5) , xlab="ruggedness" , ylab="log GDP" )
+mtext("Tighting our priors to make they cross avg ruggedness=0.215 and avg GDP=1")
+abline( h=min(dd$log_gdp_std) , lty=2 ) 
+abline( h=max(dd$log_gdp_std) , lty=2 )
+# draw 50 lines from the prior 
+rugged_seq <- seq( from=-0.1 , to=1.1 , length.out=30 ) 
+mu <- link( m8.1b , post=prior , data=data.frame(rugged_norm=rugged_seq) ) 
+for ( i in 1:50 ) 
+  lines( rugged_seq , mu[i,] , col=col.alpha("black",0.3) )
+
+precis(m8.1b)
+```
+
+With tighter priors we see how ruggedness is not associated to log GDP, even if it exists. 
+
+## 8.1.2. Adding an indicator variable isn’t enough.
+
+Let's try to uncover this association by adding continent as intercept (index variable):
+
+$$\begin{aligned}
+\mu_i=\alpha_{CID[i]}+\beta*(rugged\_norm_i-\overline{rugged\_norm_i})\\
+\alpha_{CID[i]}\sim Norm(1,0.1)
+\end{aligned}
+$$
+
+
+```{r}
+# make variable to index Africa (1) or not (2) 
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+
+m8.2 <- quap( alist(
+  log_gdp_std ~ dnorm( mu , sigma ) ,
+  mu <- a[cid] + b*( rugged_norm - mean(dd$rugged_norm) ) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( 1 )
+) , data=dd )
+
+
+precis(m8.2,depth = 2)
+```
+
+Continent as intercept already uncovered differences in GDP between Africa and non-Africa countries. The model is also significantly better than previous (dWAIC=64 and SE=15):
+
+```{r}
+compare(m8.1b,m8.2)
+
+post <- extract.samples(m8.2) 
+diff_a1_a2 <- post$a[,1] - post$a[,2] 
+PI( diff_a1_a2 )
+
+mu.NA <- link( m8.2 ,  data=data.frame(cid=1,rugged_norm=rugged_seq) ) 
+mu.A <- link( m8.2, data=data.frame(cid=2,rugged_norm=rugged_seq) ) 
+# summarize to means and intervals 
+mu.NA_mu <- apply( mu.NA , 2 , mean ) 
+mu.NA_ci <- apply( mu.NA , 2 , PI ) 
+mu.A_mu <- apply( mu.A, 2 , mean ) 
+mu.A_ci <- apply( mu.A, 2 , PI )
+
+df<-data.frame(ruggedness=c(rugged_seq,rugged_seq),
+               mu=c(mu.NA_mu,mu.A_mu),
+               mu.ci.lb=c(mu.NA_ci[1,],mu.A_ci[1,]),
+               mu.ci.ub=c(mu.NA_ci[2,],mu.A_ci[2,]),
+               cid=factor(c(rep("1",30),rep("2",30)),levels=c("1","2"))
+               )
+
+dd$cid <-as.factor(dd$cid) 
+
+colors<-c("2"="#000000","1"="#8080ff")
+# Figure 8.4           
+ggplot()+
+  geom_point(data=dd,aes(x=rugged_norm,y=log_gdp_std,col=cid))+
+  geom_line(data=df,aes(x=ruggedness,y=mu,col=cid))+
+  scale_colour_manual(values = colors,labels=c("African","Not African"))+
+  geom_ribbon(data=df,aes(x=ruggedness,ymin=mu.ci.lb,ymax=mu.ci.ub,fill=cid),alpha=0.1)+
+  scale_fill_manual(values = colors,labels=c("African","Not African"))+
+  labs(col="",fill="",x="Ruggedness (normalized)",y="logGDP (as proportion of mean)")+
+  theme_bw()
+  
+
+```
+
+## 8.1.3. Adding an interaction does work
+
+$$\begin{aligned}
+\mu_i=\alpha_{CID[i]}+\beta_{CID[i]}*(rugged\_norm_i-\overline{rugged\_norm_i})\\
+\alpha_{CID[i]}\sim Norm(1,0.1)\\
+\beta_{CID[i]}\sim Norm(0,0.3)
+\end{aligned}
+$$
+
+```{r}
+m8.3 <- quap( alist(
+  log_gdp_std ~ dnorm( mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_norm - mean(dd$rugged_norm) ) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( 1 )
+) , data=dd )
+
+precis(m8.3,depth = 2)
+
+mu.NA <- link( m8.3 ,  data=data.frame(cid=1,rugged_norm=rugged_seq) ) 
+mu.A <- link( m8.3, data=data.frame(cid=2,rugged_norm=rugged_seq) ) 
+# summarize to means and intervals 
+mu.NA_mu <- apply( mu.NA , 2 , mean ) 
+mu.NA_ci <- apply( mu.NA , 2 , PI ) 
+mu.A_mu <- apply( mu.A, 2 , mean ) 
+mu.A_ci <- apply( mu.A, 2 , PI )
+
+df<-data.frame(ruggedness=c(rugged_seq,rugged_seq),
+               mu=c(mu.NA_mu,mu.A_mu),
+               mu.ci.lb=c(mu.NA_ci[1,],mu.A_ci[1,]),
+               mu.ci.ub=c(mu.NA_ci[2,],mu.A_ci[2,]),
+               cid=factor(c(rep("1",30),rep("2",30)),levels=c("1","2"))
+               )
+
+dd$cid <-as.factor(dd$cid) 
+
+colors<-c("2"="#000000","1"="#8080ff")
+compare(m8.1b,m8.2,m8.3,func=PSIS)
+# Figure 8.5
+ggplot()+
+  geom_point(data=dd,aes(x=rugged_norm,y=log_gdp_std,col=cid))+
+  geom_line(data=df,aes(x=ruggedness,y=mu,col=cid))+
+  scale_colour_manual(values = colors,labels=c("African","Not African"))+
+  geom_ribbon(data=df,aes(x=ruggedness,ymin=mu.ci.lb,ymax=mu.ci.ub,fill=cid),alpha=0.1)+
+  scale_fill_manual(values = colors,labels=c("African","Not African"))+
+  labs(col="",fill="",x="Ruggedness (normalized)",y="logGDP (as proportion of mean)")+
+  theme_bw()
+  
+```
+
+Interaction does work but with high penalization, let's check it using the pointwise mode:
+
+```{r}
+PSIS_m8.3 <- PSIS(m8.3,pointwise=TRUE) 
+WAIC_m8.3 <- WAIC(m8.3,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8.3$k,waic=WAIC_m8.3$penalty,loc=dd$country)
+
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.4 | psis>0.4),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Ordinal regression (gaussian distribution, psis>0.5)")
+
+```
+
+Model 8.3 seems a good candidate for robust regression:
+
+```{r}
+m8.3b <- quap( alist(
+  log_gdp_std ~ dstudent(2, mu , sigma ) ,
+  mu <- a[cid] + b[cid]*( rugged_norm - mean(dd$rugged_norm) ) , 
+  a[cid] ~ dnorm( 1 , 0.1 ), 
+  b[cid] ~ dnorm( 0 , 0.3 ), 
+  sigma ~ dexp( 1 )
+) , data=dd )
+
+precis(m8.3b,depth = 2)
+
+
+colors<-c("2"="#000000","1"="#8080ff")
+compare(m8.1b,m8.2,m8.3,m8.3b,func=PSIS)
+# Figure 8.5
+PSIS_m8.3b <- PSIS(m8.3b,pointwise=TRUE) 
+WAIC_m8.3b <- WAIC(m8.3b,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m8.3b$k,waic=WAIC_m8.3b$penalty,loc=dd$country)
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.4 | psis>0.4),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Robust regression (Student-t distribution, psis>0.5)")
+
+```
+
+# 8.2. Symmetry of interactions
+
+
+```{r}
+mu.A <- link( m8.3 ,  data=data.frame(cid=1,rugged_norm=rugged_seq) ) 
+mu.NA <- link( m8.3, data=data.frame(cid=2,rugged_norm=rugged_seq) ) 
+delta <- mu.A - mu.NA
+
+delta_mu <- apply( delta , 2 , mean ) 
+delta_ci <- apply( delta , 2 , PI ) 
+
+df<-data.frame(ruggedness=c(rugged_seq),
+               mu=delta_mu,
+               mu.ci.lb=delta_ci[1,],
+               mu.ci.ub=delta_ci[2,]
+               )
+
+# Figure 8.7
+ggplot()+
+  geom_line(data=df,aes(x=ruggedness,y=mu))+
+  geom_ribbon(data=df,aes(x=ruggedness,ymin=mu.ci.lb,ymax=mu.ci.ub),alpha=0.1)+
+  geom_hline(yintercept = 0,lty="dashed")+
+  labs(col="",fill="",x="Ruggedness (normalized)",y="expected difference logGDP (as proportion of mean)")+
+  theme_bw()
+```
+
+Difference between Africa and non Africa countries change with ruggedness. Below the horizontal dashed line, African nations have lower expected GDP. This is the case for most terrain ruggedness values. But at the highest ruggedness values, a nation is possibly better off inside Africa than outside it. So economy and ruggedness depend on continent as much as economy and continent depend on ruggedness (Symmetry).
+
+
+# 8.3 Continuous interactions
+
+
+```{r}
+data(tulips) 
+d <- tulips 
+str(d)
+d$blooms_std <- d$blooms / max(d$blooms) 
+d$water_cent <- d$water - mean(d$water) 
+d$shade_cent <- d$shade - mean(d$shade)
+
+# define priors 
+# flat prior SD=1 covers 39%, 61% outside of range
+a <- rnorm( 1e4 , 0.5 , 1 ) 
+sum( a < 0 | a > 1 ) / length( a )
+#tight prior SD=0.25 covers 95%, 5% outside of range
+a <- rnorm( 1e4 , 0.5 , 0.25 ) 
+sum( a < 0 | a > 1 ) / length( a )
+
+#no interaction
+m8.4 <- quap( alist(
+blooms_std ~ dnorm( mu , sigma ) ,
+mu <- a + bw*water_cent + bs*shade_cent ,
+a ~ dnorm( 0.5 , 0.25 ) , 
+bw ~ dnorm( 0 , 0.25 ) , 
+bs ~ dnorm( 0 , 0.25 ) , 
+sigma ~ dexp( 1 )
+) , data=d )
+# interaction
+m8.5 <- quap( alist(
+blooms_std ~ dnorm( mu , sigma ) ,
+mu <- a + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+a ~ dnorm( 0.5 , 0.25 ) , bw ~ dnorm( 0 , 0.25 ) , 
+bs ~ dnorm( 0 , 0.25 ) , 
+bws ~ dnorm( 0 , 0.25 ) , 
+sigma ~ dexp( 1 )
+) , data=d )
+
+
+```
+
+
+Let's observe intercept and slope when manipulating shade for first 20 predictions:
+
+```{r}
+par(mfrow=c(2,3)) # 3 plots in 1 row 
+for (m in 1:2){
+  for ( s in -1:1 ) { 
+    idx <- which( d$shade_cent==s ) 
+    plot( d$water_cent[idx] , d$blooms_std[idx] , xlim=c(-1,1) , ylim=c(0,1) , 
+          xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+    mtext(paste0(ifelse(m==1,"m8.4 (no interaction): ","m8.5 (interaction): "),"shade=",s))
+    if (m==1){
+      mu <- link( m8.4 , data=data.frame( shade_cent=s , water_cent=-1:1 ) ) 
+    }else{
+      mu <- link( m8.5 , data=data.frame( shade_cent=s , water_cent=-1:1 ) ) 
+    }
+    
+    for ( i in 1:20 ) 
+      lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+  }
+}
+
+```
+
+We can visualize priors for both varying shades:
+
+```{r}
+set.seed(7) 
+
+par(mfrow=c(2,3)) # 3 plots in 1 row 
+for (m in 1:2){
+  for ( s in -1:1 ) { 
+      # set up the plot dimensions 
+      plot( NULL , xlim=c(-1,1) , ylim=c(-0.5,1.5) , xlab="water" , ylab="blooms" )
+      abline( h=0 , lty=2 ) 
+      abline( h=1 , lty=2 )
+      mtext(paste0(ifelse(m==1,"m8.4: ","m8.5: "),"shade=",s))
+      if (m==1){
+        prior <- extract.prior(m8.4)
+        mu <- link( m8.4 ,post=prior , 
+                    data=data.frame( shade_cent=s , water_cent=c(-1,1) ) 
+                    )
+      }else{
+        prior <- extract.prior(m8.5)
+        mu <- link( m8.5 ,post=prior , data=data.frame( shade_cent=s , water_cent=c(-1,1) )) 
+      }
+      lines( c(-1,1) , mu[1,] , col="black" ,lwd=2.0)
+      for ( i in 2:20 )
+        lines( c(-1,1), mu[i,] , col=col.alpha("black",0.3) )
+  }
+}
+
+```
+
+
+Note: I am not getting same results for priors.
+
+

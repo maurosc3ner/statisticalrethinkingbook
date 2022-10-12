@@ -1,0 +1,835 @@
+---
+title: "Ch 11"
+author: "Esteban Correa"
+date: "07/01/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(echo=T,warning = F,message = F)
+```
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+rm(list = ls())
+gc()
+
+theme_set(theme_minimal())
+```
+
+# Chapter 11. God Spiked the Integers
+
+## 11.1. Binomial regression
+
+Imagine 10 islands in a circular pattern ordered by population size, where 1 is the smallest, and 10 the biggest:
+
+```{r}
+data("chimpanzees")
+d<-chimpanzees
+
+
+d$treatment <- 1 + d$prosoc_left + 2*d$condition
+xtabs( ~ treatment + prosoc_left + condition , d )
+
+d$labels<-recode(d$treatment,
+                 `1` = "R/N", 
+                 `2` = "L/N",
+                 `3` = "R/P",
+                 `4` = "L/P")
+```
+
+
+
+
+pulled left can only take false or true (0|1) values:
+
+```{r}
+m11.1 <- quap( alist(
+  pulled_left ~ dbinom( 1 , p ) , 
+  logit(p) <- a , 
+  a ~ dnorm( 0 , 10 )
+) , data=d )
+
+precis(m11.1)
+set.seed(1999) 
+prior <- extract.prior( m11.1 , n=1e4 )
+
+```
+
+The average "a" to pull left is 0.32.
+
+```{r}
+p <- inv_logit( prior$a )
+dens( p , adj=0.1 )
+
+```
+
+
+Due to the link function, we can conclude a flat prior (mean=0 and sd=10) produces non-flat priors in the outcome space. Therefore, we need to look further for other combination that allows a proper flat prior in the outcome space.
+
+```{r}
+m11.1b <- quap( alist(
+  pulled_left ~ dbinom( 1 , p ) , 
+  logit(p) <- a , 
+  a ~ dnorm( 0 , 1.5 )
+) , data=d )
+
+precis(m11.1b)
+prior_b <- extract.prior( m11.1b , n=1e4 )
+
+# more concentrated prior
+m11.1c <- quap( alist(
+  pulled_left ~ dbinom( 1 , p ) , 
+  logit(p) <- a , 
+  a ~ dnorm( 0 , 0.5 )
+) , data=d )
+
+precis(m11.1c)
+prior_c <- extract.prior( m11.1c , n=1e4 )
+
+p_b<- inv_logit( prior_b$a )
+p_c<- inv_logit( prior_c$a )
+dens( p , adj=0.1 )
+dens( p_b , adj=0.1,add=T,col="blue" )
+dens( p_c , adj=0.1, add=T,col="red")
+```
+
+
+This is probably much flatter than is optimal, since probabilities near the center are more plausible. But this is better than the default priors most people use most of the time (two peaks in the outcome space). 
+
+Let's figure out priors for treatments:
+
+```{r}
+# flat prior for the intercept.
+m11.2 <- quap( alist(
+  pulled_left ~ dbinom( 1 , p ) , 
+  logit(p) <- a + b[treatment], 
+  a ~ dnorm( 0 , 1.5 ),
+  b[treatment]~ dnorm(0,10)
+) , data=d )
+
+precis(m11.2)
+prior_11.2 <- extract.prior( m11.2 , n=1e4 )
+p_11.2 <- sapply( 1:4 , function(k) inv_logit( prior_11.2$a + prior_11.2$b[,k] ) )
+
+#size of differences under this flat prior
+mean( abs( p_11.2[,1] - p_11.2[,2] ) )
+
+# flat prior for the intercept.
+m11.2b <- quap( alist(
+  pulled_left ~ dbinom( 1 , p ) , 
+  logit(p) <- a + b[treatment], 
+  a ~ dnorm( 0 , 1.5 ),
+  b[treatment]~ dnorm(0,0.5)
+) , data=d )
+
+precis(m11.2b)
+prior_11.2b <- extract.prior( m11.2b , n=1e4 )
+p_11.2b <- sapply( 1:4 , function(k) inv_logit( prior_11.2b$a + prior_11.2b$b[,k] ) )
+
+# this time we check absolute difference between treatments
+dens( abs( p_11.2[,1] - p_11.2[,2] ) , adj=0.1 )
+dens( abs( p_11.2b[,1] - p_11.2b[,2] ) , adj=0.1 ,add=T,col="blue")
+#size of differences under this new prior
+mean( abs( p_11.2b[,1] - p_11.2b[,2] ) )
+
+```
+
+Remember that we want to be skeptical with large differences (reduce of overfitting), so 10% differences seems more reasonable. If the dataset contains larger differences, they will shine anyway even with constrained priors.
+
+Now, we are ready to go with HMC:
+
+```{r}
+# prior trimmed data list 
+dat_list <- list( pulled_left = d$pulled_left, 
+                  actor = d$actor, 
+                  treatment = as.integer(d$treatment) )
+# flat prior for the intercept.
+m11.4 <- ulam( alist(
+  pulled_left ~ dbinom( 1 , p ) , 
+  logit(p) <- a[actor] + b[treatment], 
+  a[actor] ~ dnorm( 0 , 1.5 ),
+  b[treatment]~ dnorm(0,0.5)
+) , data=dat_list,chains=4,log_lik = T )
+
+precis(m11.4,depth = 2)
+```
+
+The equivalent Stan code is:
+
+```{r}
+stancode(m11.4)
+```
+
+We can check average probabilities of each chimpanzee:
+
+```{r}
+#get posteriors of the intercept (actor)
+post <- extract.samples(m11.4) 
+# convert to probabilities using link function
+p_left <- inv_logit( post$a )
+# probabilities of pulling left:
+plot( precis( as.data.frame(p_left) ) , xlim=c(0,1) )
+```
+
+Chimpanzees 2 and 7 are eager to pull left whereas other are eager to right. What is the effect of treatment:
+
+```{r}
+plot( precis( m11.4,depth = 2,pars = "b"), ,labels=c("R/N", "L/N", "R/P", "L/P")  )
+```
+
+we are looking for that chimpanzees choose pro social option when partner is present. So we should take the difference (contrast) between 1-3, and 2-4:
+
+```{r}
+diffs <- list( db13 = post$b[,1] - post$b[,3], db24 = post$b[,2] - post$b[,4] )
+plot( precis(diffs) )
+```
+
+No evidence on prosocial effect in left or right. Please remember that they are log odds ratios. You can exponentiated to interpreted as odds ratios.
+
+Let's check observed vs predicted proportions differ:
+
+```{r}
+# by table is easier using dplyr
+observedProportions<-d %>% 
+  group_by(actor,treatment) %>% 
+  summarise(proportion=mean(pulled_left)) %>% 
+  left_join(d %>% distinct(actor, treatment, labels, condition, prosoc_left),
+            by = c("actor", "treatment")) %>% 
+  mutate(condition = factor(recode(condition,`0`="No partner",`1`="With partner" )),
+         prosoc_left=factor(prosoc_left),
+         actor=factor(actor),
+         labels=factor(labels,levels=c("R/N","L/N","R/P","L/P")) )
+levels(observedProportions$labels)
+
+
+p1<-observedProportions %>% 
+  ggplot(aes(x=labels,y=proportion)) +
+  facet_grid(~actor) +
+  geom_hline(yintercept = .5,lty=3)+
+  geom_line(aes(group = prosoc_left),
+            size = 1/4)+
+  geom_point(aes(color = condition),
+                  size = 2.5, show.legend = T)  +
+  labs(subtitle = "Observed proportions") +theme_classic()
+p1
+```
+
+Posterior predictions:
+
+```{r}
+set.seed(1999) 
+# we imaging all scenarios
+dat<-list(actor=observedProportions$actor,treatment=observedProportions$treatment)
+#We make use of the full equation this time
+post_m114<-link(m11.4,data=dat)
+mu_m114<-apply(post_m114,2,mean)
+pi_m114<-apply(post_m114,2,PI)
+
+predict_post<-d %>% distinct(actor, treatment, labels, condition, prosoc_left)
+predict_post$proportion<-mu_m114
+predict_post$ymin<-pi_m114[1,]
+predict_post$ymax<-pi_m114[2,]
+predict_post<-predict_post %>% 
+  mutate(condition = factor(recode(condition,`0`="No partner",`1`="With partner" )),
+         prosoc_left=factor(prosoc_left),
+         actor=factor(actor),
+         labels=factor(labels,levels=c("R/N","L/N","R/P","L/P")) )
+#plot
+p2<-predict_post %>% 
+  ggplot(aes(x=labels,y=proportion)) +
+  facet_grid(~actor) +
+  geom_hline(yintercept = .5,lty=3)+
+  geom_line(aes(group = prosoc_left),
+            size = 1/4)+
+  geom_pointrange(aes(ymin=ymin,ymax=ymax,color = condition),
+                  fatten = 2.5, show.legend = T)  +
+  labs(subtitle = "Posterior predictions")+theme_classic()
+
+library(patchwork)
+(p1/p2)
+```
+
+You could do the same using a no interaction, but it requires an additional parameter. WAIC/PSIS should be very similar:
+
+```{r}
+d$side <- d$prosoc_left + 1 # right 1, left 2 
+d$cond <- d$condition + 1 # no partner 1, partner 2
+dat_list2 <- list( pulled_left = d$pulled_left, actor = d$actor, side = d$side, cond = d$cond )
+m11.5 <- ulam(
+  alist(
+        pulled_left ~ dbinom( 1 , p ) , 
+        logit(p) <- a[actor] + bs[side] + bc[cond] , 
+        a[actor] ~ dnorm( 0 , 1.5 ), 
+        bs[side] ~ dnorm( 0 , 0.5 ), 
+        bc[cond] ~ dnorm( 0 , 0.5 )
+) , data=dat_list2 , chains=4 , log_lik=TRUE )
+
+compare( m11.5 , m11.4 , func=PSIS )
+```
+
+Can you see the differences in parameters and model of stan blocks?
+
+```{r}
+stancode(m11.5)
+```
+
+Finally, you can run stan code version of m11.4 as:
+
+```{r}
+m11.4_code<-stancode(m11.4)
+m11.4_stan<-stan(model_code=m11.4_code,data=dat_list,chains=4)
+
+compare( m11.5 , m11.4,m11.4_stan , func=PSIS )
+```
+
+
+### 11.1.2. Relative shark and absolute penguin
+
+It is more common to interpret binomial problems (logistic regressions) through relative effects (aka proportional odds). If we change a value of a variable and say the odds of the outcome double, we are making use of relative effects. For the last example, you can extract the odds ratio as:
+
+```{r}
+#get posteriors of the intercept (actor)
+post_m114 <- extract.samples(m11.4) 
+mean(exp(post_m114$b[,4]-post_m114$b[,2]))
+PI(exp(post_m114$b[,4]-post_m114$b[,2]))
+plot(precis(exp(post_m114$b[,4]-post_m114$b[,2])))
+
+```
+
+there is a 7% reduction in left pulling when partner is present. But this interval is around one. There is not enough evidence chimpanzees are prosocial.
+
+**Note:** *Odds are no enough to say if variable is important. 
+The risk of focusing on relative effects, such as proportional odds, is that they aren’t
+enough to tell us whether a variable is important or not. Ifthe other parameters in themodel make the outcome veryunlikely, then even a large proportional odds like 5.0 would notmake the outcome frequent. Consider for example a rare disease which occurs in 1 per one-million people. Suppose also that reading this textbook increased the odds ofthe disease 5-fold. That would mean approximate 4 more cases of the disease per one-million people. So only 5-in- a-million chance now. The book is safe for reading.*
+
+
+### 11.1.3. Aggregated binomial: Chimpanzees again, condensed.
+
+```{r}
+d_aggregated<-d %>% 
+  group_by(treatment,actor,side,cond) %>% 
+  summarise(left_pulls=sum(pulled_left))
+  
+d_aggregated
+
+dat_list3<-list(left_pulls=d_aggregated$left_pulls,
+                treatment=d_aggregated$treatment,
+                actor=d_aggregated$actor
+                )
+
+# flat prior for the intercept.
+m11.6 <- ulam( alist(
+  left_pulls ~ dbinom( 18 , p ) , 
+  logit(p) <- a[actor] + b[treatment], 
+  a[actor] ~ dnorm( 0 , 1.5 ),
+  b[treatment]~ dnorm(0,0.5)
+) , data=dat_list3 ,chains=4,log_lik = T )
+
+plot(precis(m11.6,depth = 2))
+plot(precis(m11.4,depth = 2))
+compare(m11.4,m11.6,func = PSIS)
+```
+
+We can check effects were almost identical with two main changes. First, we can not compare with individual logistic and aggregated binomial directly using cross-validation. However their posterior are the same, because it only changes the trials (1 for Bernoulli, and 18 for binomial)
+
+The formula for the aggregated version using the world toss example is:
+
+$$ Pr(6|9,p)=\frac{6!}{6!(9-6)!}p^{6}(1-p)^{9-6}$$
+
+whereas the logistic version is:
+
+$$ Pr((1,1,1,1,1,1,0,0,0)|p)=p^{6}(1-p)^{9-6}$$
+The combinatorial number makes the aggregated probabilities larger (there are more ways to see the data) due to this factor. Check their deviance:
+
+```{r}
+-2*dbinom(6,9,0.2,log=T)
+
+-2*sum(dbern(c(1,1,1,1,1,1,0,0,0),0.2,log=T))
+```
+
+Second, pareto reports influential observations, which makes sense because the validation is donde leaving all observations from one actor out. So leave-one-out cross-validation, behaves as leave-18-out.
+
+### 11.1.4. Aggregated binomial: Graduate school admissions.
+
+What happen when when vary the number of trails per object of interest (actor, academic department application):
+
+```{r}
+data(UCBadmit) 
+d <- UCBadmit
+head(d)
+```
+
+is there a difference between female and male admissions at UC Berkeley?
+
+```{r}
+dat_list4<-list(admit=d$admit,
+                applications=d$applications,
+                gid=ifelse(d$applicant.gender=="male",1,2),
+                did=as.numeric(d$dept))
+
+m11.7<-ulam(alist(
+  admit~dbinom(applications,p),
+  logit(p)<-a[gid],
+  a[gid]~dnorm(0,1.5)
+),data=dat_list4,chains=4,log_lik = T)
+
+summary(m11.7)
+plot(precis(m11.7,depth = 2))
+#constrasts
+post_m117<-extract.samples(m11.7)
+# in log-odds
+diffLO_mavsfe<-post_m117$a[,1]-post_m117$a[,2]
+#in odds ratio
+diffOR_mavsfe<-(exp(post_m117$a[,1]-post_m117$a[,2]))
+# in prob
+diffPR_mavsfe<-inv_logit(post_m117$a[,1])-inv_logit(post_m117$a[,2])
+
+precis(list(LO=diffLO_mavsfe,OR=diffOR_mavsfe,PR=diffPR_mavsfe))
+```
+
+1.85 higher odds of admission for being admitted for male compared to female or 14% more probability.
+
+```{r}
+postcheck(m11.7)
+for ( i in 1:6 ) { 
+  x <- 1 + 2*(i-1) 
+y1 <- d$admit[x]/d$applications[x] 
+y2 <- d$admit[x+1]/d$applications[x+1] 
+lines( c(x,x+1) , c(y1,y2) , col=rangi2 , lwd=2 ) 
+text( x+0.5 , (y1+y2)/2 + 0.05 , d$dept[x] , cex=0.8 , col=rangi2 )
+}
+```
+
+
+```{r}
+m11.8<-ulam(alist(
+  admit~dbinom(applications,p),
+  logit(p)<-a[gid]+d[did],
+  a[gid]~dnorm(0,1.5),
+  d[did]~dnorm(0,1.5)
+),data=dat_list4,chains=4,iter = 4000,log_lik = T)
+
+summary(m11.8)
+plot(precis(m11.8,depth = 2))
+#constrasts
+post_m118<-extract.samples(m11.8)
+# in log-odds
+diffLO_mavsfe<-post_m118$a[,1]-post_m118$a[,2]
+#in odds ratio
+diffOR_mavsfe<-(exp(post_m118$a[,1]-post_m118$a[,2]))
+# in prob
+diffPR_mavsfe<-inv_logit(post_m118$a[,1])-inv_logit(post_m118$a[,2])
+
+precis(list(LO=diffLO_mavsfe,OR=diffOR_mavsfe,PR=diffPR_mavsfe))
+```
+
+After adding dept, we can see such difference does not exist. it is beacuse females are applying in higher proportion to the most difficult dept.
+
+```{r}
+compare(m11.7,m11.8,func=PSIS)
+postcheck(m11.8)
+```
+
+## 11.2. Poisson regression
+
+```{r}
+rm(list = ls())
+monks<-1000
+p=0.001
+y<-rbinom(1e5,size = monks,prob = p)
+c(mean(y),var(y))
+```
+
+### 11.2.1. Example: Oceanic tool complexity
+
+Model tools development using population and contact
+
+```{r}
+data("Kline")
+d<-Kline
+d
+d$logpop<-scale(log(d$population))
+d$cid<-ifelse(d$contact=="high",2,1)
+d
+```
+
+Please remember that priors do not look equal in GLMs. We need to check them in the output space (log-normal):
+
+```{r}
+# for a flat prior mean=0 sd=10 
+curve(dlnorm(x,0,10),from=0,to=100,n=200)
+curve(dnorm(x,0,10),from=0,to=100,n=200,col=rangi2,add=T)
+```
+
+The huge value and long tail comes from $\alpha\sim Normal(0,10)$. When we evaluate the log-normal as $exp(\mu+\sigma^2/2)$, which evaluates as $exp(50)$, the number of tools will be impossibly large:
+
+```{r}
+a<-rnorm(1e4, 0,10)
+mean(exp(a))
+```
+
+A better gues might be $exp(3+0.5^2/2)=20$
+
+```{r}
+curve(dnorm(x,3,0.5),from=0,to=100,n=200,col=rangi2,add=F)
+curve(dlnorm(x,3,0.5),from=0,to=100,n=200,add=T)
+
+```
+
+The prior will be:
+
+```{r}
+par(mfrow=c(1,2))
+N<-100
+a<-rnorm(N,3,0.5)
+b<-rnorm(N,0,10) # bad prior for beta
+plot( NULL , xlim=c(-2,2) , ylim=c(0,100) , xlab="std. log population" , ylab="total tools") 
+for ( i in 1:N ) curve( exp( a[i] + b[i]*x ) , add=TRUE , col=grau() )
+a<-rnorm(N,3,0.5)
+b<-rnorm(N,0,.2) # better prior for beta
+plot( NULL , xlim=c(-2,2) , ylim=c(0,100) , xlab="std. log population" , ylab="total tools") 
+for ( i in 1:N ) curve( exp( a[i] + b[i]*x ) , add=TRUE , col=grau() )
+```
+
+It is now way better without crazy grows. We can move back to the non log space to obtain a better interpretation of these priors:
+
+```{r}
+par(mfrow=c(1,2))
+x_seq <- seq( from=log(100) , to=log(200000) , length.out=100 ) 
+lambda <- sapply( x_seq , function(x) exp( a + b*x ) ) 
+
+plot( NULL , xlim=range(x_seq) , ylim=c(0,500) , xlab="log population" , ylab="total tools" )
+for ( i in 1:N ) lines( x_seq , lambda[i,] , col=grau() , lwd=1.5 )
+
+plot( NULL , xlim=range(exp(x_seq)) , ylim=c(0,500) , xlab="population" , ylab="total tools" )
+for ( i in 1:N ) lines( exp(x_seq) , lambda[i,] , col=grau() , lwd=1.5 )
+
+```
+
+We have good priors now, let's move into the Stan model:
+
+```{r}
+dat <- list(tools = d$total_tools,
+            P = d$logpop,
+            cid = d$cid)
+#simple model (intercept)
+m11.9 <- ulam(
+  alist(tools ~ dpois(lambda),
+        log(lambda) <- a,
+        a ~ dnorm(3, 0.5)),
+  data = dat,
+  chains = 4,
+  log_lik = T
+)
+
+#interaction model
+m11.10 <- ulam(
+  alist(
+    tools ~ dpois(lambda),
+    log(lambda) <- a[cid] + b[cid] * P,
+    a[cid] ~ dnorm(3, 0.5),
+    b[cid] ~ dnorm(0, 0.2)
+  ),
+  data = dat,
+  chains = 4,
+  log_lik = T,cores = 4
+)
+
+compare(m11.10, m11.9, func=PSIS)
+```
+
+```{r}
+k <- PSIS(m11.10 , pointwise = TRUE)$k
+par(mfrow=c(1,2))
+plot(
+  dat$P ,
+  dat$tools,
+  xlab = "log population (std)" ,
+  ylab = "total tools" ,
+  col = rangi2 ,
+  pch = ifelse(dat$cid == 1 , 1 , 16) ,
+  lwd = 2 ,
+  ylim = c(0, 75) ,
+  cex = 1 + normalize(k)
+)
+
+# set up the horizontal axis values to compute predictions at
+ns <- 100
+pop_seq <- seq(from = -5 ,
+               to = 3 ,
+               length.out = ns)
+# predictions for cid=1 (low contact)
+lambda <- link(m11.10 , data = data.frame(P = pop_seq , cid = 1))
+lmu <- apply(lambda , 2 , mean)
+lci <- apply(lambda , 2 , PI)
+lines(pop_seq , lmu , lty = 1 , lwd = 1.5)
+shade(lci , pop_seq , xpd = TRUE)
+#now high contact
+lambda <- link(m11.10 , data = data.frame(P = pop_seq , cid = 2))
+lmu <- apply(lambda , 2 , mean)
+lci <- apply(lambda , 2 , PI)
+lines(pop_seq , lmu , lty = 2 , lwd = 1.5)
+shade(lci , pop_seq , xpd = TRUE)
+
+summary(d)
+pop_seq_orig<-exp(9+pop_seq*1.53)
+plot(
+  d$population,
+  d$total_tools,
+  xlab = "population" ,
+  ylab = "total tools" ,
+  col = rangi2 ,
+  pch = ifelse(dat$cid == 1 , 1 , 16) ,
+  lwd = 2 ,
+  ylim = c(0, 75) ,
+  cex = 1 + normalize(k)
+)
+# predictions for cid=1 (low contact)
+lambda <- link(m11.10 , data = data.frame(P = pop_seq , cid = 1))
+lmu <- apply(lambda , 2 , mean)
+lci <- apply(lambda , 2 , PI)
+lines(pop_seq_orig , lmu , lty = 1 , lwd = 1.5)
+shade(lci , pop_seq_orig , xpd = TRUE)
+#now high contact
+lambda <- link(m11.10 , data = data.frame(P = pop_seq , cid = 2))
+lmu <- apply(lambda , 2 , mean)
+lci <- apply(lambda , 2 , PI)
+lines(pop_seq_orig , lmu , lty = 2 , lwd = 1.5)
+shade(lci , pop_seq_orig , xpd = TRUE)
+
+```
+
+Other option
+
+```{r}
+dat2 <- list(
+  tools = d$total_tools,
+  P = d$population,
+  cid = d$cid
+)
+m11.11 <-
+  ulam(
+    alist(
+      tools ~ dpois(lambda),
+      lambda <-exp(a[cid])*P^b[cid]/g,
+      a[cid] ~ dnorm(1, 1),
+      b[cid] ~ dexp(1),
+      g ~ dexp(1)
+    ),
+    data = dat2 ,
+    chains = 4 ,
+    log_lik = TRUE
+  )
+
+compare(m11.10, m11.9,m11.11, func=PSIS)
+```
+
+### 11.2.2. Negative binomial (gamma-Poisson) models.
+
+
+
+
+
+
+
+
+
+
+
+## 11.4. Censoring and survival regression
+
+```{r}
+rm(list = ls())
+```
+
+
+**Overthinking:** You can simulate an exponential by imagining a machine with N parts. Each of these parts has an equal chance of breaking on any given day. If any part breaks, the whole machine stops working. What is the proba- bility that the machine stops working after x days? Let’s compare a machine with 2 parts to a machine with 5 parts:
+
+```{r}
+x2<-replicate(1e5, min(runif(2,1,100)))
+x5<-replicate(1e5, min(runif(5,1,100)))
+
+par(mfrow=c(1,2))
+dens(x5,xlab="Day",col=rangi2)
+dens(x2,xlab="Day",add=T)
+mtext("Failures, exponential,\n2 (black), and 5 (blue) parts")
+
+#Gamma
+N<-10 # parts
+M<-2 #parts failing
+x2_g<-replicate(1e5, sort(runif(N,1,100))[M])
+M<-5 #parts failing
+x5_g<-replicate(1e5, sort(runif(N,1,100))[M])
+
+
+dens(x2_g,xlab="Day")
+dens(x5_g,xlab="Day",add=T,col=rangi2)
+mtext("Failures, Gamma,\n2 (black), and 5 (blue) parts")
+
+```
+
+### 11.4.2. Cats' adoption
+
+The probability of being adopted is:
+
+$$D_{i}\sim Exponential(\lambda_{i})\\
+p(D_{i}|\lambda_{i})=\lambda_{i}e^{-\lambda_{i}D_{i}}$$
+
+and the probability of no being adopted at certain time is one-minus the cumulative distribution (aka complementary cumulative probability distribution):
+
+$$Pr(D_{i}|\lambda_{i})=1-e^{-\lambda_{i}D_{i}}\\
+Pr(D_{i}|\lambda_{i})=1-(1-e^{-\lambda_{i}D_{i}})\\
+Pr(D_{i}|\lambda_{i})=e^{-\lambda_{i}D_{i}}$$
+
+We will have two formulas in the model notation:
+
+$$D_{i}|Adopt_{i}=1\sim Exponential(\lambda_{i})\\
+D_{i}|Adopt_{i}=0\sim ExponentialCCDF(\lambda_{i})\\
+\lambda_{i}=1/\mu_{i}\\
+log\mu_{i}=\alpha_{Color[i]}
+$$
+
+dataset:
+
+```{r}
+data("AustinCats")
+d<-AustinCats
+
+head(d)
+d$adopt<-ifelse(d$out_event=="Adoption",1L,0)
+d$isBlack<-ifelse(d$color=="Black","Yes","No")
+d$time=as.numeric(d$days_to_event)
+d$cid<-ifelse(d$color=="Black",1L,2L)
+
+```
+
+
+```{r}
+dat_list<-list(
+  time=as.numeric(d$days_to_event),
+  color=ifelse(d$color=="Black",1L,2L),
+  age=d$intake_age,
+  adopted=d$adopt
+)
+m11.15u<-ulam(
+  alist(
+    time|adopted==1~exponential(lambda),
+    time|adopted==0~custom(exponential_lccdf(!Y|lambda)),
+    lambda<-1.0/mu,
+    log(mu)<-alpha[color],
+    alpha[color]~normal(0,.5)
+  ),data=dat_list,chains=4,cores=4
+)
+
+m11.15u
+precis(m11.15u,depth = 2)
+#average time of adoption
+```
+
+```{r}
+set.seed(1999) 
+prior <- extract.prior( m11.15u , n=1e3 )
+
+p<-exp(prior$alpha)
+par(mfrow=c(1,2))
+dens(p[,1])
+dens(p[,2])
+```
+
+
+
+```{r}
+post_m1115<-extract.samples(m11.15u)
+post_m1115$diff_a<-(post_m1115$alpha[,1]-post_m1115$alpha[,2])
+post_m1115$day<-exp(post_m1115$alpha)
+post_m1115$diff_exp<-post_m1115$day[,1]-post_m1115$day[,2]
+precis(post_m1115,2)
+```
+
+being a black cat takes about 9 days longer of being adopted compared to others.
+
+```{r}
+stancode(m11.15u)
+```
+
+
+```{r}
+
+library(survival)
+library(survminer)
+```
+
+
+```{r}
+m1<-survfit(Surv(time, adopt) ~ isBlack, data = d)
+m1
+
+plot(m1, 
+     xlab = "Days", 
+     ylab = "Overall adoption probability")
+
+```
+
+```{r}
+fit <- coxph(Surv(time, adopt) ~isBlack , data = d)
+summary(fit)
+
+
+```
+
+
+### NCOG dataset
+
+```{r}
+df <- 
+  read.delim("ncog.txt", sep = " ") %>% 
+  mutate(event = d, time  = t * 12 / 365, year = as.factor(year)) %>%
+  select(arm, event, time, year)
+```
+
+```{r fit_coxph}
+fit.coxph <- coxph(Surv(time, event) ~ arm, data = df, x = TRUE)
+summary(fit.coxph)
+```
+
+Rethinking version
+
+```{r}
+dat_list<-list(
+  time=as.numeric(df$time),
+  arm=ifelse(df$arm=="A",1L,2L),
+  event=df$event
+)
+
+
+mNCOG<-ulam(
+  alist(
+    time|event==1~exponential(lambda),
+    time|event==0~custom(exponential_lccdf(!Y|lambda)),
+    lambda<-1.0/mu,
+    log(mu)<-a[arm],
+    a[arm]~normal(0,.5)
+  ),data=dat_list,chains=4,cores=4
+)
+
+mNCOG
+precis(mNCOG,depth = 2)
+print(mNCOG)
+```
+
+
+```{r}
+post_mNCOG<-extract.samples(mNCOG)
+post_mNCOG$diff_a<-(post_mNCOG$a[,1]-post_mNCOG$a[,2])
+post_mNCOG$day<-exp(post_mNCOG$a)
+post_mNCOG$diff_exp<-post_mNCOG$day[,1]-post_mNCOG$day[,2]
+precis(post_mNCOG,2)
+```
+
+
+

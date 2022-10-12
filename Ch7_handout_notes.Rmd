@@ -1,0 +1,723 @@
+---
+title: "Ch7"
+author: "Esteban Correa"
+date: "04/20/2022"
+output: html_document
+---
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+memory.size()
+rm(list = ls())
+memory.limit(size=64000)
+gc()
+
+theme_set(theme_minimal())
+```
+
+# 7.1 The problem with parameters
+
+```{r}
+sppnames <- c( "afarensis","africanus","habilis","boisei", "rudolfensis","ergaster","sapiens")
+brainvolcc <- c( 438 , 452 , 612, 521, 752, 871, 1350 ) 
+masskg <- c( 37.0 , 35.5 , 34.5 , 41.5 , 55.5 , 61.0 , 53.5 ) 
+d <- data.frame( species=sppnames , brain=brainvolcc , mass=masskg )
+d$mass_std <- (d$mass - mean(d$mass))/sd(d$mass) 
+d$brain_std <- d$brain / max(d$brain) # we scale but not standarize brain volume
+```
+
+
+
+```{r}
+m7.1 <- quap( alist(
+brain_std ~ dnorm( mu , exp(log_sigma) ), 
+mu <- a + b*mass_std, a ~ dnorm( 0.5 , 1 ), 
+b ~ dnorm( 0 , 10 ), 
+log_sigma ~ dnorm( 0 , 1 )
+), data=d )
+precis(m7.1)
+
+set.seed(12) 
+s <- sim( m7.1 ) 
+r <- apply(s,2,mean) - d$brain_std 
+resid_var <- var2(r) 
+outcome_var <- var2( d$brain_std ) 
+1 - resid_var/outcome_var
+
+R2_is_bad <- function( quap_fit ) { 
+  s <- sim( quap_fit , refresh=0 ) 
+  r <- apply(s,2,mean) - d$brain_std 
+  1 - var2(r)/var2(d$brain_std)
+}
+#plot
+post <- extract.samples(m7.1) 
+mass_seq <- seq( from=min(d$mass_std) , to=max(d$mass_std) , length.out=100 ) 
+l <- link( m7.1 , data=list( mass_std=mass_seq ) ) 
+mu <- apply( l , 2 , mean ) 
+ci <- apply( l , 2 , PI ) 
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19,ylim=c(-0.5,1.5),xaxt="n",yaxt="n") 
+# converting back to natural scale
+at<-mass_seq[seq(from=1,to=100,20)]
+labels<-at*sd(d$mass)+mean(d$mass)
+axis( side=1 , at=at , labels=round(labels,0) )
+at<-seq(from=0,to=1,0.15)
+labels<-at*max(d$brain)
+axis( side=2 , at=at , labels=round(labels,0) )
+lines( mass_seq , mu ) 
+shade( ci , mass_seq )
+```
+
+Order 2
+
+```{r}
+m7.2 <- quap( alist(
+brain_std ~ dnorm( mu , exp(log_sigma) ), 
+mu <- a + b[1]*mass_std+b[2]*mass_std^2, 
+a ~ dnorm( 0.5 , 1 ), 
+b ~ dnorm( 0 , 10 ), 
+log_sigma ~ dnorm( 0 , 1 )
+), data=d,start=list(b=rep(0,2)) )
+precis(m7.2,depth = 2)
+
+set.seed(12) 
+R2_is_bad(m7.2)
+post <- extract.samples(m7.2) 
+mass_seq <- seq( from=min(d$mass_std) , to=max(d$mass_std) , length.out=100 ) 
+l <- link( m7.2 , data=list( mass_std=mass_seq ) ) 
+mu <- apply( l , 2 , mean ) 
+ci <- apply( l , 2 , PI ) 
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19) 
+lines( mass_seq , mu ) 
+shade( ci , mass_seq )
+```
+
+Order 3
+
+```{r}
+m7.3 <- quap( alist(
+brain_std ~ dnorm( mu , exp(log_sigma) ), 
+mu <- a + b[1]*mass_std+b[2]*mass_std^2+b[3]*mass_std^3, 
+a ~ dnorm( 0.5 , 1 ), 
+b ~ dnorm( 0 , 10 ), 
+log_sigma ~ dnorm( 0 , 1 )
+), data=d,start=list(b=rep(0,3)) )
+precis(m7.3,depth = 2)
+
+set.seed(12) 
+R2_is_bad(m7.3)
+post <- extract.samples(m7.3) 
+mass_seq <- seq( from=min(d$mass_std) , to=max(d$mass_std) , length.out=100 ) 
+l <- link( m7.3 , data=list( mass_std=mass_seq ) ) 
+mu <- apply( l , 2 , mean ) 
+ci <- apply( l , 2 , PI ) 
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19) 
+lines( mass_seq , mu ) 
+shade( ci , mass_seq )
+```
+
+Order 4
+
+```{r}
+m7.4 <- quap( alist(
+brain_std ~ dnorm( mu , exp(log_sigma) ), 
+mu <- a + b[1]*mass_std+b[2]*mass_std^2+b[3]*mass_std^3+b[4]*mass_std^4, 
+a ~ dnorm( 0.5 , 1 ), 
+b ~ dnorm( 0 , 10 ), 
+log_sigma ~ dnorm( 0 , 1 )
+), data=d,start=list(b=rep(0,4)) )
+precis(m7.4,depth = 2)
+
+set.seed(12) 
+R2_is_bad(m7.4)
+post <- extract.samples(m7.4) 
+mass_seq <- seq( from=min(d$mass_std) , to=max(d$mass_std) , length.out=100 ) 
+l <- link( m7.4 , data=list( mass_std=mass_seq ) ) 
+mu <- apply( l , 2 , mean ) 
+ci <- apply( l , 2 , PI ) 
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19,ylim=c(-0.5,1.5)) 
+lines( mass_seq , mu ) 
+shade( ci , mass_seq )
+```
+
+Order 5
+
+```{r}
+m7.5 <- quap( alist(
+brain_std ~ dnorm( mu , exp(log_sigma) ), 
+mu <- a + b[1]*mass_std+b[2]*mass_std^2+b[3]*mass_std^3+b[4]*mass_std^4+b[5]*mass_std^5, 
+a ~ dnorm( 0.5 , 1 ), 
+b ~ dnorm( 0 , 10 ), 
+log_sigma ~ dnorm( 0 , 1 )
+), data=d,start=list(b=rep(0,5)) )
+precis(m7.5,depth = 2)
+
+set.seed(12) 
+R2_is_bad(m7.5)
+post <- extract.samples(m7.5) 
+mass_seq <- seq( from=min(d$mass_std) , to=max(d$mass_std) , length.out=100 ) 
+l <- link( m7.5 , data=list( mass_std=mass_seq ) ) 
+mu <- apply( l , 2 , mean ) 
+ci <- apply( l , 2 , PI ) 
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19,ylim=c(-0.5,1.5)) 
+lines( mass_seq , mu ) 
+shade( ci , mass_seq )
+```
+
+Order 6
+
+```{r}
+m7.6 <- quap( alist(
+brain_std ~ dnorm( mu , 0.001), 
+mu <- a + b[1]*mass_std+b[2]*mass_std^2+b[3]*mass_std^3+b[4]*mass_std^4+b[5]*mass_std^5+b[6]*mass_std^6, 
+a ~ dnorm( 0.5 , 1 ), 
+b ~ dnorm( 0 , 10 )
+), data=d,start=list(b=rep(0,6)) )
+precis(m7.6,depth = 2)
+
+set.seed(12) 
+R2_is_bad(m7.6)
+post <- extract.samples(m7.6) 
+mass_seq <- seq( from=min(d$mass_std) , to=max(d$mass_std) , length.out=100 ) 
+l <- link( m7.6 , data=list( mass_std=mass_seq ) ) 
+mu <- apply( l , 2 , mean ) 
+ci <- apply( l , 2 , PI ) 
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19,ylim=c(-0.5,1.2),xaxt="n",yaxt="n") 
+# converting back to natural scale
+at<-mass_seq[seq(from=1,to=100,20)]
+labels<-at*sd(d$mass)+mean(d$mass)
+axis( side=1 , at=at , labels=round(labels,0) )
+at<-seq(from=0,to=1,0.3)
+labels<-at*max(d$brain)
+axis( side=2 , at=at , labels=round(labels,0) )
+lines( mass_seq , mu ) 
+shade( ci , mass_seq )
+
+```
+
+
+
+## Underfitting and overfitting as under-sensitivity and over-sensitivity
+
+```{r}
+#plot
+par(mfrow=c(1,2))
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19,ylim=c(-.2,1.2),xaxt="n",yaxt="n",
+      ylab="brain volume (cc)",xlab="body mass (kg)") 
+at<-mass_seq[seq(from=1,to=100,20)]
+labels<-at*sd(d$mass)+mean(d$mass)
+axis( side=1 , at=at , labels=round(labels,0) )
+at<-seq(from=0,to=1,0.3)
+labels<-at*max(d$brain)
+axis( side=2 , at=at , labels=round(labels,0) )
+mtext("Underfitting and under-sensitivity")
+for(idx in 1:nrow(d)){
+  
+  dcustom<-d[-idx,]
+  m7.1c <- quap( alist(
+    brain_std ~ dnorm( mu , exp(log_sigma) ), 
+    mu <- a + b*mass_std, a ~ dnorm( 0.5 , 1 ), 
+    b ~ dnorm( 0 , 10 ), 
+    log_sigma ~ dnorm( 0 , 1 )
+  ), data=dcustom )
+  #plot
+  post <- extract.samples(m7.1c) 
+  mass_seq <- seq( from=min(dcustom$mass_std) , to=max(dcustom$mass_std) , length.out=100 ) 
+  l <- link( m7.1c , data=list( mass_std=mass_seq ) ) 
+  mu <- apply( l , 2 , mean ) 
+  lines( mass_seq , mu,add=T,alpha=0.5 ) 
+  idx<-idx+1
+}
+plot( brain_std ~ mass_std , data=d ,col=rangi2,pch=19,ylim=c(-0.2,1.2),xaxt="n",yaxt="n",
+      ylab="brain volume (cc)",xlab="body mass (kg)") 
+at<-mass_seq[seq(from=1,to=100,20)]
+labels<-at*sd(d$mass)+mean(d$mass)
+axis( side=1 , at=at , labels=round(labels,0) )
+at<-seq(from=0,to=1,0.3)
+labels<-at*max(d$brain)
+axis( side=2 , at=at , labels=round(labels,0) )
+abline(h=0,lty="dashed",col=rangi2)
+mtext("Overfitting and over-sensitivity")
+for(idx in 1:nrow(d)){
+  dcustom<-d[-idx,]
+  m7.6c <- quap( alist(
+  brain_std ~ dnorm( mu , 0.001), 
+    mu <- a + b[1]*mass_std+b[2]*mass_std^2+b[3]*mass_std^3+b[4]*mass_std^4+b[5]*mass_std^5+b[6]*mass_std^6, 
+    a ~ dnorm( 0.5 , 1 ), 
+    b ~ dnorm( 0 , 10 )
+  ), data=dcustom,start=list(b=rep(0,6)) )
+  #plot
+  post <- extract.samples(m7.6c) 
+  mass_seq <- seq( from=min(dcustom$mass_std) , to=max(dcustom$mass_std) , length.out=100 ) 
+  l <- link( m7.6c , data=list( mass_std=mass_seq ) ) 
+  mu <- apply( l , 2 , mean ) 
+  lines( mass_seq , mu,add=T,alpha=0.5 ) 
+  idx<-idx+1
+}
+
+```
+
+
+# 7.2 Entropy and accuracy
+
+**Information entropy** is defined as the uncertainty contained in a probability distribution. It is equal to the average log-probability of an event. 
+
+**Divergence** is the additional uncertainty induced by using probabilities from one distribution to describe another distribution. Kullback-Leibler divergence really is measuring how far q is from the target p, in units of entropy.
+
+How to measure uncertainty:
+
+Suppose we live in Ohio with 30% of rain and 70% o sun during a year:
+
+```{r}
+p<-c(0.3,0.7)
+-sum(p*log(p))
+
+# if we observe during several years this (q=p), divergence is almost zero
+# q<-c(0.99,0.01)
+q<-p
+# divergence
+sum(p*log(p/q))
+```
+
+Now, suppose we live in Abu Dhabi with 1% of rain and 99% o sun during a year:
+
+```{r}
+p<-c(0.01,0.99)
+-sum(p*log(p))
+
+```
+
+Uncertainty is reduced. 
+
+```{r}
+
+pReal<-c(0.3,0.7)
+myP1<-seq(0.01,1,by=0.01)
+myH<-c()
+myD<-c()
+
+for( idx in myP1){
+  pair<-c(idx,1-idx)
+  # print(pair)
+  myH<-c(myH,-sum(pair*log(pair))  )
+  myD<-c(myD,sum(pReal*log(pReal/pair)))
+}
+
+par(mfrow=c(1,2))
+plot(myP1,myH,col=rangi2,xlab="p[1]",ylab="H(p)")
+mtext("Highest uncertainty at p=0.5 (tossing a coin)")
+abline(v=0.5,lty="dashed")
+plot(NULL,xlim=c(0,1),ylim=c(0,2.5),xlab="q[1]",ylab="Divergence of q from p")
+mtext("Lowest divergency when q=p (q=0.3)")
+lines(myP1,myD,col=rangi2)
+abline(v=0.3,lty="dashed")
+```
+
+Bayesian flavour of entropy requires the computation through a distribution:
+
+```{r}
+set.seed(1) 
+lppd( m7.1 , n=1e4 )
+
+sum(lppd( m7.1 , n=1e4 ))
+```
+
+Mechanistic way:
+
+```{r}
+set.seed(1) 
+logprob <- sim( m7.1 , ll=TRUE , n=1e4 ) 
+# number of simulations for the distribution
+n <- ncol(logprob) 
+# number of observations ns=7
+ns <- nrow(logprob) 
+f <- function( i ) {
+  log_sum_exp( logprob[,i] ) - log(ns)
+}
+
+( lppd <- sapply( 1:n , f ) )
+sum(lppd)
+```
+
+Now let's compare divergence for order 6 model (the perfect model):
+
+```{r}
+lppd( m7.6 , n=1e4 )
+sum(lppd( m7.6 , n=1e4 ))
+# deviance (-2*logprob or llk) = the lower the better
+-2*sum(lppd( m7.6 , n=1e4 ))
+```
+
+
+```{r}
+set.seed(1) 
+sapply( list(m7.1,m7.2,m7.3,m7.4,m7.5,m7.6) , function(m) sum(lppd(m)) )
+sapply( list(m7.1,m7.2,m7.3,m7.4,m7.5,m7.6) , function(m) -2*sum(lppd(m)) )
+```
+
+The more complex the larger the log probability score and deviance.
+
+```{r}
+?sim_train_test
+sim_train_test( N=100, k=2 ) 
+
+N <- 20 
+kseq <- 1:5 
+dev <- sapply( kseq , function(k) { 
+  print(k); 
+  # repeat sim_train_test 1e4 for 20 observations k parameters
+  # r <- replicate( 1e4 , sim_train_test( N=N, k=k ) ); 
+  # multicore version
+  r <- mcreplicate( 1e3 , sim_train_test( N=N, k=k ),mc.cores = 8 ); 
+  
+  c( mean(r[1,]) , mean(r[2,]) , sd(r[1,]) , sd(r[2,]) )
+} )
+
+dev100 <- sapply( kseq , function(k) { 
+  print(k); 
+  # repeat sim_train_test 1e4 for 20 observations k parameters
+  # r <- replicate( 1e4 , sim_train_test( N=N, k=k ) ); 
+  # multicore version
+  r <- mcreplicate( 1e3 , sim_train_test( N=100, k=k ),mc.cores = 8 ); 
+  
+  c( mean(r[1,]) , mean(r[2,]) , sd(r[1,]) , sd(r[2,]) )
+} )
+
+par(mfrow=c(1,2))
+plot( 1:5 , dev[1,] , ylim=c( min(dev[1:2,])-5 , max(dev[1:2,])+10 ) , xlim=c(1,5.1) , 
+      xlab="number of parameters" , ylab="deviance" , pch=16 , col=rangi2 )
+mtext( paste0( "N = ",N ) ) 
+points( (1:5)+0.1 , dev[2,] ) 
+for ( i in kseq ) { 
+  pts_in <- dev[1,i] + c(-1,+1)*dev[3,i] 
+  pts_out <- dev[2,i] + c(-1,+1)*dev[4,i] 
+  lines( c(i,i) , pts_in , col=rangi2 ) 
+  lines( c(i,i)+0.1 , pts_out )
+}
+
+plot( 1:5 , dev100[1,] , ylim=c( min(dev100[1:2,])-5 , max(dev100[1:2,])+20 ) , xlim=c(1,5.1) , 
+      xlab="number of parameters" , ylab="deviance" , pch=16 , col=rangi2 )
+mtext( paste0( "N = ",100 ) ) 
+points( (1:5)+0.1 , dev100[2,] ) 
+for ( i in kseq ) { 
+  pts_in <- dev100[1,i] + c(-1,+1)*dev100[3,i] 
+  pts_out <- dev100[2,i] + c(-1,+1)*dev100[4,i] 
+  lines( c(i,i) , pts_in , col=rangi2 ) 
+  lines( c(i,i)+0.1 , pts_out )
+}
+
+```
+
+
+# 7.3 
+
+
+```{r}
+N <- 20 
+kseq <- 1:5
+sigma_seq<-c(0.2,0.5,1)
+dev20<-{}
+
+for( idx in 1:length(sigma_seq)){
+  print(paste0(idx,":",sigma_seq[idx]))
+  dev20[[idx]] <- sapply( kseq , function(k) { 
+    print(paste0("total parameters:",k)); 
+    # repeat sim_train_test 1e4 for 20 observations k parameters
+    # r <- replicate( 1e4 , sim_train_test( N=N, k=k ) ); 
+    # multicore version
+    r <- mcreplicate( 1e3 , sim_train_test( N=N, k=k,b_sigma =sigma_seq[idx]  ),mc.cores = 8 ); 
+    
+    c( mean(r[1,]) , mean(r[2,]) , sd(r[1,]) , sd(r[2,]) )
+  } )
+}
+
+N <- 100
+dev100<-{}
+for( idx in 1:length(sigma_seq)){
+  print(paste0(idx,":",sigma_seq[idx]))
+  dev100[[idx]] <- sapply( kseq , function(k) { 
+    print(paste0("total parameters:",k)); 
+    r <- mcreplicate( 1e3 , sim_train_test( N=N, k=k,b_sigma =sigma_seq[idx]  ),mc.cores = 8 ); 
+    c( mean(r[1,]) , mean(r[2,]) , sd(r[1,]) , sd(r[2,]) )
+  } )
+}
+
+par(mfrow=c(1,2))
+plot( 1:5 , NULL , ylim=c( min(dev20[[1]][1:2,])-5 , max(dev20[[1]][1:2,])+5 ) , xlim=c(1,5.1) , 
+      xlab="number of parameters" , ylab="deviance" , pch=16 , col=rangi2 )
+mtext( paste0( "N = ",20 ) ) 
+for ( i in 1:length(sigma_seq) ) { 
+  points( (kseq)+0.1 , dev20[[i]][1,] ) 
+  lines( kseq , dev20[[i]][1,],lty=i ) 
+  points( (kseq)+0.1 , dev20[[i]][2,],col=rangi2 ) 
+  lines( kseq , dev20[[i]][2,] , col=rangi2 ,lty=i) 
+}
+legend(1, 62, legend=c("Most skeptic prior:N(0,0.2)", "N(0,0.5)","Least skeptic prior:N(0,1)"), lty=1:3, cex=0.6,
+       box.lty=0)
+
+plot( 1:5 , NULL , ylim=c( min(dev100[[1]][1:2,])-5 , max(dev100[[1]][1:2,])+5 ) , xlim=c(1,5.1) , 
+      xlab="number of parameters" , ylab="deviance" , pch=16 , col=rangi2 )
+mtext( paste0( "N = ",N ) ) 
+for ( i in 1:length(sigma_seq) ) { 
+  points( (kseq)+0.1 , dev100[[i]][1,] ) 
+  lines( kseq , dev100[[i]][1,],lty=i) 
+  points( (kseq)+0.1 , dev100[[i]][2,],col=rangi2 ) 
+  lines( kseq , dev100[[i]][2,] , col=rangi2 ,lty=i) 
+}
+legend(2.3, 288, legend=c("Most skeptic prior:N(0,0.2)", "N(0,0.5)","Least skeptic prior:N(0,1)"), lty=1:3, cex=0.6,
+       box.lty=0)
+```
+
+Graphic above show how deviance for 20 observations is affected by prior regularization. Skeptical prior N(0,0.2) has worst training deviance but better testing deviance for models with 3+ parameters. Therefore, it is better on avoiding **overfitting** or preventing model to adapting completely to the sample. On the other side, deviance for relatively high number of observations is not greatly affected by the prior regularization. Keep that in mind when selecting the right prior for validation. Because their regularization nature, multilevel models choose the right prior adaptively. In descriptive statistics this is also called **ridge regression**, where sigma prior is named $\lambda\geq0$ for less overfitting.
+
+# 7.4 Predicting predictive accuracy
+
+
+Let's test WAIC. We always should remember that posteriors in bayes are calculated as density distributions rather than point estimates.
+
+```{r}
+data(cars) 
+m7.4 <- quap( alist(
+  dist ~ dnorm(mu,sigma), 
+  mu <- a + b*speed, 
+  a ~ dnorm(0,100), 
+  b ~ dnorm(0,10), 
+  sigma ~ dexp(1)
+) , data=cars )
+
+precis(m7.4)
+set.seed(94)
+n_samples <- 1000 
+post <- extract.samples(m7.4,n=n_samples)
+
+# get the log likelihood
+logprob <- sapply( 1:n_samples , function(s) { 
+  mu <- post$a[s] + post$b[s]*cars$speed 
+  dnorm( cars$dist , mu , post$sigma[s] , log=TRUE )
+} )
+# log-pointwise- predictive-density
+n_cases <- nrow(cars) 
+lppd <- sapply( 1:n_cases , function(i) log_sum_exp(logprob[i,]) - log(n_samples) )
+# Penalization term
+pWAIC <- sapply( 1:n_cases , function(i) var(logprob[i,]) )
+sum(pWAIC)
+-2*( sum(lppd) - sum(pWAIC) )
+WAIC(m7.4)
+# vectorized WAIC
+waic_vec <- -2*( lppd - pWAIC ) 
+#standard error
+sqrt( n_cases*var(waic_vec) )
+```
+
+
+
+## 7.5.1 Model mis-selection
+
+```{r}
+set.seed(62)
+N<-100
+h0<-rnorm(N,10,2)
+treatment<-rep(0:1,each=N/2)
+
+fungus<-rbinom(N,
+               size = 1,# upper bound
+               prob=0.5-treatment*0.4)
+h1<-h0+rnorm(N,mean = 5-3*fungus)
+d<-data.frame(h0=h0,h1=h1,treatment=treatment,fungus=fungus)
+d$simp<-rlnorm(N,0,0.25)
+precis(d)
+
+# intercept only model
+m6.6<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p~dlnorm(0,0.25),
+  sigma~dexp(1)
+),data = d)
+precis(m6.6)
+# post-treatment model
+m6.7<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p<-a+bt*treatment+bf*fungus,
+  a~dnorm(0,0.2),
+  bt~dnorm(0,.5),
+  bf~dnorm(0,.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6.7)
+# correct model
+m6.8<-quap(flist=alist(
+  h1~dnorm(mu,sigma),
+  mu<-h0*p,
+  p<-a+bt*treatment,
+  a~dnorm(0,0.2),
+  bt~dnorm(0,.5),
+  sigma~dexp(1)
+),data = d)
+precis(m6.8)
+
+compare( m6.6 , m6.7 , m6.8 )
+```
+
+The intercept model, m6.6, is 12 units worse than m6.8. Are these big differences or small differences? One way to answer that is to ask a clearer question: Are the models easily distinguished by their expected out-of-sample accuracy? To answer that question, we need to consider the error in the WAIC estimates. We don’t use their standard errors but rather the standard error of their difference (dSE).
+
+```{r}
+waic_m6.7 <- WAIC( m6.7 , pointwise=TRUE )$WAIC 
+waic_m6.8 <- WAIC( m6.8 , pointwise=TRUE )$WAIC 
+n <- length(waic_m6.7) 
+diff_m6.7_m6.8 <- waic_m6.7 - waic_m6.8 
+sqrt( n*var( diff_m6.7_m6.8 ) )
+
+# Now the difference using a z-score 0f 2.6 = 0.01
+53.6 +c(-1,1)*13.09*2.6
+
+```
+
+If it crosses by zero difference is  not significant between two models. So, these models are very easy to distinguish by expected out-of-sample accuracy. After checking standard error 53.9+-99.99% std error, Model m6.7 is better
+
+```{r}
+#filled is in-sample deviance, open points are for waic
+plot( compare( m6.6 , m6.7 , m6.8 ) )
+
+
+compare( m6.6 , m6.7 , m6.8 )@dSE
+
+compare( m6.6 , m6.8 )
+waic_m6.6 <- WAIC( m6.6 , pointwise=TRUE )$WAIC 
+n <- length(waic_m6.8) 
+diff_m6.8_m6.6 <- waic_m6.8 - waic_m6.6 
+sqrt( n*var( diff_m6.8_m6.6 ) )
+
+# Now the difference using a z-score 0f 2.6 = 0.01. If it crosses by zero difference is  not significant between two models
+12 +c(-1,1)*9.23*2.6
+```
+
+Although there is evidence of causality of treatment on height. Models with and without treatment does not differ in term of prediction accuracy. This result just echoes the core fact about WAIC (and CV and PSIS): It guesses predictive accuracy, not causal truth. A variable can be causally related to an outcome, but have little relative impact on it, and WAIC will tell you that.
+
+## 7.5.2 Outliers and other illusions
+
+Let's recapitulate the waffle dataset and the spurious correlation in chapter 5:
+
+```{r}
+set.seed(24071847)
+data("WaffleDivorce")
+
+d<-WaffleDivorce
+d$MA<-standardize(d$MedianAgeMarriage)
+d$D<-standardize(d$Divorce)
+d$MR<-standardize(d$Marriage)
+
+#divorce~marriage age
+m5.1<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bma*MA,
+  a~dnorm(0,0.2),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5.1)
+#D~marriage rate
+m5.2<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR,
+  a~dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  sigma~dexp(1)
+),data = d)
+precis(m5.2)
+#D~marriageAge+marriage rate
+m5.3<-quap(flist=alist(
+  D~dnorm(mu,sigma),
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+precis(m5.3)
+ 
+compare( m5.1 , m5.2 , m5.3 , func=PSIS )
+compare( m5.1 , m5.2 , m5.3  )
+```
+
+Remember the case of Idaho (lower divorce rate). We can use WAIC (pwaic>0.5) or PSIS (k>0.5) as a way to detect outliers:
+
+```{r}
+PSIS_m5.3 <- PSIS(m5.3,pointwise=TRUE) 
+WAIC_m5.3 <- WAIC(m5.3,pointwise=TRUE) 
+
+plot( PSIS_m5.3$k , WAIC_m5.3$penalty , xlab="PSIS Pareto k" , ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+# I prefer ggplot version for this to tag values programatically
+
+df<-data.frame(psis=PSIS_m5.3$k,waic=WAIC_m5.3$penalty,loc=d$Loc)
+
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(waic>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Ordinal regression (gaussian distribution, psis>0.5)")
+
+```
+
+Let's make this robust using t distribution:
+
+```{r}
+m5.3t<-quap(flist=alist(
+  D~dstudent(2,mu,sigma), # t distribution uses an additional v parameter to control for thickness
+  mu<-a+bmr*MR+bma*MA,
+  a<-dnorm(0,0.2),
+  bmr~dnorm(0,0.5),
+  bma~dnorm(0,0.5),
+  sigma~dexp(1)
+),data=d)
+precis(m5.3t)
+# now warnings of outliers dissapeared
+PSIS( m5.3t, func=PSIS )
+
+PSIS_m5.3t <- PSIS(m5.3t,pointwise=TRUE) 
+WAIC_m5.3t <- WAIC(m5.3t,pointwise=TRUE) 
+
+df<-data.frame(psis=PSIS_m5.3t$k,waic=WAIC_m5.3t$penalty,loc=d$Loc)
+df%>% 
+  ggplot() +
+  geom_point(aes(x=psis,y=waic))+
+  geom_text(data=. %>% filter(psis>0.5),
+            aes(x = psis - 0.03,y=waic,label = loc),
+            hjust = 1)+
+  geom_vline(xintercept=0.5,lty="dashed",col="black")+
+  labs(title="Robust regression (t-distribution, psis>0.5)")
+
+```
+
+* The use of student-t distribution with thicker tails helps to assign more probability of an event far a way of the mean (rare extreme observations occur more often). The higher probability means that an outlier will not be uncommon so its influence will be lower. This can be observed by plotting both. For v=2 (thicker)
+
+
+```{r}
+
+x<-seq(-4,4,0.1)
+y<-dnorm(x,0,1)
+yt<-dstudent(x,nu=2,0,1)
+yt2<-dstudent(x,nu=20,0,1) #big values of v approximate to gaussian
+
+
+par(mfrow=c(1,2))
+plot( NULL , xlim=range(x) , ylim=range(y) ,xlab="Std. value" , ylab="Density" )
+lines(x,y)
+lines(x,yt,col=rangi2)
+lines(x,yt2,col="red")
+mtext( "Gaussian vs t-distribution density" )
+
+
+plot( NULL , xlim=range(x) , ylim=range(-log(y)) ,xlab="Std. value" , ylab="-log(density)" )
+lines(x,-log(y))
+lines(x,-log(yt),col=rangi2)
+mtext( "Outliers' influence (Gaussian~exponential)" )
+
+```
+
+

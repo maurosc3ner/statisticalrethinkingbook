@@ -1,0 +1,397 @@
+---
+title: "Ch4 - Exercises"
+author: "Esteban Correa"
+date: "01/26/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+library(rethinking)
+library(tidyverse)
+memory.size()
+rm(list = ls())
+memory.limit(size=64000)
+gc()
+```
+
+# Exercises
+
+## Easy
+
+### 4E1 
+
+In the model definition below, which is the likelihood
+
+$y_{i}\sim Normal(\mu,\sigma)$
+
+$\mu\sim Normal(0,10)$
+
+$\sigma\sim Exponential(1)$
+
+
+$y_{i}=Normal(\mu,\sigma)$ is the likelihood. Likelihood is the probability distribution of the outcome. In this case, height is the outcome, if you plot height, it will have a gaussian-like shape with mean $\mu$ and standard deviation $\sigma$.
+
+### 4E2 In the model definition just above, how many parameters are in the posterior distribution?
+
+There are two parameters, mean $\mu$ and sd $\sigma$. Those parameters are described as unobserved variables. $y_{i}$ is constructed from $\mu$ and sd $\sigma$. Note: They are the quantities to be estimated. Remember that each parameter is something that we want to know from the data, so we ask the golem to invent one parameter for us.
+
+
+### 4E3. Using the model definition above, write down the appropriate form of Bayes' theorem that includes the proper likelihood and priors.
+
+
+The posterior probability of observing a value h of height is the product of the likelihood and priors standardized:
+
+$Pr(\mu,\sigma|y)=\cfrac{\prod_{i}Normal(y_{i}|\mu,\sigma)Normal(\mu|0,10)Exponential(\sigma|1)}{\iint Normal(y_{i}|\mu,\sigma)Normal(\mu|0,10)Exponential(\sigma|1) \,d\mu\,d\sigma}$
+
+
+### 4E4. In the model definition below, which line is the linear model?
+
+$\mu_{i}=\alpha+\beta x_i$ is the linear model.
+
+### 4E5. In the model definition just above, howmany parameters are in the posterior distribution? 
+
+There are 3 parameters ($\alpha$,$\beta$,and $\sigma$). $\mu$ is no longer a parameter to be estimated, it depends of $\alpha$, and $\beta$. 
+
+##Medium. 
+
+### 4M1.For the model definition below, simulate observed y values from the prior (not the posterior).
+
+
+Simulation of observed values for $y_{i}$ from priors:
+
+```{r}
+sample.mu<-rnorm(1e4,0,10)
+sample.sigma<-rexp(1e4)
+sample.yi<-rnorm(sample.mu,sample.sigma)
+dens(sample.yi)
+```
+
+
+### 4M2 Translate the model just above into a quap formula.
+
+```{r}
+flist = alist(
+  yi~dnorm(mu,sigma),
+  mu<-dnorm(0,10),
+  sigma~dexp(1)
+  )
+```
+
+### 4M3 Translate the quap model formula below into a mathematical model definition. 
+
+```{}
+flist <- alist(
+  y ~ dnorm( mu , sigma ), 
+  mu <- a + b*x, 
+  a ~ dnorm( 0 , 10 ),   
+  b ~ dunif( 0 , 1 ), 
+  sigma ~ dexp( 1 )
+)
+```
+
+$y\sim Normal(\mu,\sigma)$
+
+$\mu=a+b x$
+
+$a\sim Normal(0,10)$
+
+$b\sim Uniform(0,1)$
+
+$\sigma\sim Exponential(1)$
+
+### 4M4 A sample ofstudents is measured for height each year for 3 years. After the third year, you want to fit a linear regression predicting height using year as a predictor. Write down the mathematical model definition for this regression, using any variable names and priors you choose. Be prepared to defend your choice of priors.
+
+$height\sim Normal(\mu,\sigma)$
+
+$\mu=a+\beta year$
+
+$a\sim Normal(170,20)$
+
+$\beta\sim logNormal(0,1)$
+
+$\sigma\sim Uniform(0,50)$
+
+
+intercept makes use of the average height in colombia with a wider sd. $\beta$ make assumes that slope can be only positive for that age of students.
+
+### 4M5. Now suppose I remind you that every student got taller each year. Does this information lead you to change your choice of priors? How?
+
+We used log normal what allow us to keep the slope always positive (increasing!).
+
+### 4M6. Now suppose I tell you that the variance among heights for students of the same age is never more than 64cm. How does this lead you to revise your priors?
+
+We update the definition for $a$ from 20 cm to 8 cm (sqrt(64cm))
+
+$a\sim Normal(170,8)$ 
+
+## Hard
+
+### 4H1 The weights listed belowwere recorded in the !Kung census, but heights were not recorded for these individuals. Provide predicted heights and 89% intervals for each of these individuals. That is, fill in the table below, using model-based predictions.
+
+```{r}
+data("Howell1")
+d<-Howell1
+
+xbar<-mean(d$weight)
+m4h1<-quap(flist=alist(
+  height~dnorm(mu,sigma),
+  mu<-a+b*(weight-xbar),
+  a~dnorm(175,20),
+  b~dlnorm(0,1),
+  sigma~dunif(0,50)
+),data = d
+)
+precis(m4h1)
+```
+
+a) 46.95
+
+```{r}
+post_46kg<-extract.samples(n = 1e5,m4h1)
+mu_46kg<-post_46kg$a+post_46kg$b*(46.95-xbar)
+(mu_map<-round(mean(mu_46kg),1))
+mu_CI<-round(PI(mu_46kg),1)
+# dens(mu_46kg,col=rangi2,lwd=2 , 
+#      xlab=paste0("mu=",mu_map,
+#                  ", CI=",mu_CI[1],"-",mu_CI[2],
+#                  " |weight=46.95 Kg"))
+PI(mu_46kg)
+```
+
+
+b) 43.72
+
+```{r}
+post_43kg<-extract.samples(n = 1e5,m4h1)
+mu_43kg<-post_43kg$a+post_43kg$b*(43.72-xbar)
+(mu_map<-round(mean(mu_43kg),1))
+mu_CI<-round(PI(mu_43kg),1)
+# dens(mu_43kg,col=rangi2,lwd=2 , 
+#      xlab=paste0("mu=",mu_map,
+#                  ", CI=",mu_CI[1],"-",mu_CI[2],
+#                  " |weight=43.72 Kg"))
+PI(mu_43kg)
+```
+
+
+c) 64.78
+
+```{r}
+# extract gaussian samples
+post_64kg<-extract.samples(n = 1e5,m4h1)
+# estimate height for all generated samples
+mu_64kg<-post_64kg$a+post_64kg$b*(64.78-xbar)
+# estimate the map 
+(mu_map<-round(mean(mu_64kg),1))
+(mu_CI<-round(PI(mu_64kg),1))
+# dens(mu_64kg,col=rangi2,lwd=2 , 
+#      xlab=paste0("mu=",mu_map,
+#                  ", CI=",mu_CI[1],"-",mu_CI[2],
+#                  " |weight=43.72 Kg"))
+```
+
+
+
+
+d) 32.59
+
+```{r}
+xtarget=32.59
+# extract gaussian samples
+post_32kg<-extract.samples(n = 1e5,m4h1)
+# estimate height for all generated samples
+mu_32kg<-post_32kg$a+post_32kg$b*(xtarget-xbar)
+# estimate the map 
+(mu_map<-round(mean(mu_32kg),1))
+(mu_CI<-round(PI(mu_32kg),1))
+# dens(mu_32kg,col=rangi2,lwd=2 , 
+#      xlab=paste0("mu=",mu_map,
+#                  ", CI=",mu_CI[1],"-",mu_CI[2],
+#                  " |weight=32.59 Kg"))
+```
+
+d) 54.63
+
+```{r}
+xtarget=54.63
+# extract gaussian samples
+post_54kg<-extract.samples(n = 1e5,m4h1)
+# estimate height for all generated samples
+mu_54kg<-post_54kg$a+post_54kg$b*(xtarget-xbar)
+# estimate the map 
+(mu_map<-round(mean(mu_54kg),1))
+(mu_CI<-round(PI(mu_54kg),1))
+# dens(mu_54kg,col=rangi2,lwd=2 , 
+#      xlab=paste0("mu=",mu_map,
+#                  ", CI=",mu_CI[1],"-",mu_CI[2],
+#                  " |weight=54 Kg"))
+```
+
+### 4H2. Select out all the rows in the Howell1 data with ages below 18 years of age. If you do it right, you should end up with a new data frame with 192 rows in it.
+
+#### (a) Fit a linear regression to these data, using quap. Present and interpret the estimates. For every 10 units of increase in weight, how much taller does the model predict a child gets?
+
+```{r}
+d2<-d %>% 
+  dplyr::filter(age<18)
+
+m4h2<-quap(flist = alist(
+  height~dnorm(mu,sigma),
+  mu<-a+b*(weight-mean(weight)),
+  a~dnorm(175,20),
+  b~dlnorm(0,1),
+  sigma~dunif(0,50)
+),data = d2)
+
+precis(m4h2)
+```
+
+it means a person ten kilogram heavier than the average will be 27.2 cm taller. 
+
+#### (b) Plot the raw data, with height on the vertical axis and weight on the horizontal axis. Super-impose the MAP regression line and 89% interval for the mean. Also superimpose the 89% interval for predicted heights.
+
+```{r}
+summary(d2$weight)
+weight.seq <- seq( from=round(min(d2$weight),0) , to=round(max(d2$weight),0), by=1 )
+mu_all <- link( m4h2 ,data = data.frame(weight=weight.seq))
+mu.mean<-apply(mu_all,MARGIN = 2,FUN = mean)
+mu.PI<-apply(mu_all,MARGIN = 2,FUN = PI)
+
+# interval to test
+
+# and we plot again but adding this new interval
+# plot raw data
+plot( height ~ weight , d2 , col=col.alpha(rangi2,0.5) )
+# draw MAP line
+lines( weight.seq , mu.mean )
+# draw HPDI region for line
+shade( mu.PI , weight.seq )
+
+# Again we do this using the interval of weights
+sim.height <- sim( m4h2 , data=list(weight=weight.seq) ,
+                   n = 1e4 # control the roughness of the interval
+                   )
+str(sim.height)
+# then we summarized as always
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+
+
+# draw PI region for simulated heights
+shade( height.PI , weight.seq )
+```
+
+
+#### (c) What aspects of the model fit concern you? Describe the kinds of assumptions you would change, if any, to improve the model. You don’t have to write any new code. Just explain what the model appears to be doing a bad job of, and what you hypothesize would be a better model. 
+
+
+The increase in height is not linear with weight during childhood. Therefore, several points are outside of the prediction intervals for the model. We could try with a log version of weight or non linear version of it (splines) following biological assumptions (increasing in height during childhood->stable and subtle decrease during adulthood).
+
+### 4H3.
+
+```{r}
+m4h3<-quap(flist = alist(
+  height~dnorm(mu,sigma),
+  mu<-a+b*log(weight),
+  a~dnorm(175,20),
+  b~dlnorm(0,1),
+  sigma~dunif(0,50)
+),data = d)
+
+precis(m4h3)
+```
+
+
+```{r}
+plot( height ~ weight , data=d , col=col.alpha(rangi2,0.4) )
+summary(d$weight)
+weight.seq <- seq( from=round(min(d$weight),0) , to=round(max(d$weight),0), by=1 )
+mu_all <- link( m4h3 ,data = data.frame(weight=weight.seq))
+mu.mean<-apply(mu_all,MARGIN = 2,FUN = mean)
+mu.PI<-apply(mu_all,MARGIN = 2,FUN = PI,prob=0.97)
+
+# interval to test
+
+# and we plot again but adding this new interval
+# plot raw data
+plot( height ~ weight , d , col=col.alpha(rangi2,0.5) )
+# draw MAP line
+lines( weight.seq , mu.mean )
+# draw HPDI region for line
+shade( mu.PI , weight.seq )
+
+# Again we do this using the interval of weights
+sim.height <- sim( m4h3 , data=list(weight=weight.seq) ,
+                   n = 1e4 # control the roughness of the interval
+                   )
+str(sim.height)
+# then we summarized as always
+height.PI <- apply( sim.height , 2 , PI , prob=0.97 )
+
+
+# draw PI region for simulated heights
+shade( height.PI , weight.seq )
+```
+
+### 4H4. Plot the prior predictive distribution for the polynomial regression model in the chapter. You can modify the code that plots the linear regression prior predictive distribution. Can youmodify the prior distributions of α, β1, and β2 so that the prior predictions sta ywithin the biologically reasonable outcome space? That is to say: Do not try to fit the data by hand. But do try to keep the curves consistent with what you know about height and weight, before seeing these exact data.
+
+```{r}
+d<-Howell1
+d$weight.s<-(d$weight-mean(d$weight))/sd(d$weight)
+d$weight.s2<-d$weight.s^2
+d$weight.s3<-d$weight.s^3
+
+m4h4<-quap(flist = alist(
+  height~dnorm(mu,sigma),
+  mu<-a+b1*weight.s+b2*weight.s2+b3*weight.s3,
+  a~dnorm(175,20),
+  b1~dlnorm(0,1),
+  b2~dnorm(0,1),
+  
+  b3~dnorm(0,1),
+  sigma~dunif(0,50)
+),data = d)
+
+precis(m4h4)
+```
+
+
+
+```{r}
+
+weight.seq <- seq( from=round(min(d$weight.s),0) , to=round(max(d$weight.s),0), by=1 )
+mu_all <- link( m4h4 ,data = data.frame(weight.s=weight.seq,
+                                        weight.s2=weight.seq^2,
+                                        weight.s3=weight.seq^3))
+mu.mean<-apply(mu_all,MARGIN = 2,FUN = mean)
+mu.PI<-apply(mu_all,MARGIN = 2,FUN = PI,prob=0.97)
+
+# interval to test
+
+# and we plot again but adding this new interval
+# plot raw data
+plot( height ~ weight.s , d , col=col.alpha(rangi2,0.5) )
+# draw MAP line
+lines( weight.seq , mu.mean )
+# draw HPDI region for line
+shade( mu.PI , weight.seq )
+
+# Again we do this using the interval of weights
+sim.height <- sim( m4h4, data=list(weight.s=weight.seq,weight.s2=weight.seq^2,
+                                        weight.s3=weight.seq^3) ,
+                   n = 1e4 # control the roughness of the interval
+                   )
+str(sim.height)
+# then we summarized as always
+height.PI <- apply( sim.height , 2 , PI , prob=0.97 )
+
+
+# draw PI region for simulated heights
+shade( height.PI , weight.seq )
+```
+
+Comparing polynomials, a degree 2 polynomial is enough to keep consistent with the data. A degree-3 polynom might have an increase of height at large weights which is unreal based biological measures.
+
+
+
